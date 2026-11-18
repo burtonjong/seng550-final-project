@@ -62,6 +62,12 @@ Call `normalize_series(metric, utc_date, rows)` from `renewflow.transform` with 
 
 Run `uv run --locked pytest` to check the real capture and validation cases offline after installing dependencies. The full suite passed, and the README replay validated all 72 observations from the real capture.
 
+### Phase 3 PostgreSQL and sequential runner
+
+See the [local PostgreSQL demo](../README.md#run-the-local-postgresql-demo) for database setup, fixture replay, and row-count verification. The runner reuses extraction and validation for live UTC date ranges and writes one transaction per complete day. Integration tests cover reruns, corrections, and transactional rollback against an isolated test database.
+
+The unit suite and Compose configuration checks passed. The PostgreSQL integration tests still need a running test database.
+
 ### Phase 5 scheduling
 
 For phase 5, use an explicit UTC cron timetable at `0 19 * * *` and derive the observation date from `data_interval_end` for scheduled and native backfill runs. Proposed default is `CronDataIntervalTimetable` with `catchup=False` and a fixed, UTC-aware start date that allows the chosen historical windows. The CLI accepts `[start_date, end_date)`. For native Airflow backfills, document the translation from that date range to the pinned version's logical-date bounds and verify it with a dry run and a three-day integration run. A manual single-day run takes an explicit observation date. [Airflow timetables](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/timetable.html), [Airflow backfills](https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/backfill.html)
@@ -94,4 +100,4 @@ This experiment measures day-level and series-level parallel work on one host. U
 
 Target a complete local rehearsal and code freeze by **November 30, 2026**, as a proposed internal milestone. The demo ZIP is due on **December 1, 2026, at 11:59 PM** via D2L. The in-person demo is **December 2, 2026, 8:00–9:50 AM in ENA 305** and assesses working code and each member's ability to execute and explain their own contribution. Name the ZIP using `Group Number SENG550 ProjectTitle Demo` with the approved title and group number. Include source and supporting files needed for the demo, plus setup and verification instructions.
 
-For the December 4 report and recording, retain the measured outputs, source citations, architectural rationale, and individual contribution notes from the implementation. OpenAI Codex assisted with repository inspection, documentation research, planning, and the extractor and validation code and tests. Each contributor should record the AI assistance and external sources applicable to their own work and independently verify the material they use or present.
+For the December 4 report and recording, retain the measured outputs, source citations, architectural rationale, and individual contribution notes from the implementation. OpenAI Codex assisted with repository inspection, documentation research, planning, the extractor and validator, the sequential runner and PostgreSQL loader, their tests, and the local setup instructions. Each contributor should record the AI assistance and external sources applicable to their own work and independently verify the material they use or present.
