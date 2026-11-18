@@ -171,6 +171,7 @@ def main() -> None:
                     "apiVersion": result.api_version,
                     "response": {"total": len(result.rows), "data": result.rows},
                 }
+        output_status = "Terminal summary only. Add --snapshot PATH to save a sanitized JSON file."
         if args.snapshot:
             capture = {
                 "utc_date": args.date.isoformat(),
@@ -184,7 +185,11 @@ def main() -> None:
             args.snapshot.parent.mkdir(parents=True, exist_ok=True)
             with args.snapshot.open("x", encoding="utf-8") as output:
                 output.write(contents)
-            print(f"Saved {args.snapshot}")
+            output_status = f"Saved sanitized JSON snapshot to {args.snapshot}"
+
+        total_observations = len(expected) * len(series)
+        print(f"Verified {total_observations} {RESPONDENT} observations for {args.date} UTC.")
+        print(output_status)
     except (EIAError, OSError, OverflowError) as error:
         parser.exit(1, f"{error}\n")
 

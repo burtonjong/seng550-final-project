@@ -149,14 +149,26 @@ class ExtractTests(TestCase):
 
 
 class SmokeCommandTests(TestCase):
-    def smoke(self, snapshot, pages):
-        argv = ["eia", "--date", DAY.isoformat(), "--snapshot", str(snapshot)]
+    def smoke(self, pages, snapshot=None):
+        argv = ["eia", "--date", DAY.isoformat()]
+        if snapshot is not None:
+            argv.extend(["--snapshot", str(snapshot)])
         with (
             patch.dict(os.environ, {"EIA_API_KEY": TEST_KEY}),
             patch("sys.argv", argv),
             patch.object(requests.Session, "get", side_effect=pages),
         ):
             eia.main()
+
+    def test_reports_terminal_only_output_when_snapshot_is_omitted(self):
+        pages = [response(hourly_rows(facet, code)) for _, _, facet, code in EXPECTED_SERIES]
+        with redirect_stdout(StringIO()) as output:
+            self.smoke(pages)
+
+        summary, status = output.getvalue().splitlines()[-2:]
+        self.assertEqual(summary, "Verified 72 CISO observations for 2025-01-15 UTC.")
+        self.assertIn("Terminal summary only.", status)
+        self.assertIn("--snapshot PATH", status)
 
     def test_capture_keeps_provenance_and_can_be_read_without_credentials(self):
         pages = []
@@ -166,9 +178,12 @@ class SmokeCommandTests(TestCase):
             pages.append(response(rows))
         with TemporaryDirectory() as directory, redirect_stdout(StringIO()) as output:
             snapshot = Path(directory) / "fixtures" / "day.json"
-            self.smoke(snapshot, pages)
+            self.smoke(pages, snapshot=snapshot)
             content = snapshot.read_text(encoding="utf-8")
 
+        self.assertEqual(
+            output.getvalue().splitlines()[-1], f"Saved sanitized JSON snapshot to {snapshot}"
+        )
         self.assertNotIn(TEST_KEY, content)
         self.assertNotIn('"request"', content)
         capture = json.loads(content)
@@ -190,7 +205,7 @@ class SmokeCommandTests(TestCase):
             snapshot = Path(directory) / "day.json"
             rows = hourly_rows("fueltype", "SUN")[:-1]
             with self.assertRaises(SystemExit) as exit_status:
-                self.smoke(snapshot, [response(rows)])
+                self.smoke([response(rows)], snapshot=snapshot)
             self.assertEqual(exit_status.exception.code, 1)
             self.assertFalse(snapshot.exists())
             self.assertIn("24 expected UTC hour endings", error.getvalue())

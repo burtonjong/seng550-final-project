@@ -62,7 +62,7 @@ uv run --locked --env-file .env python -m renewflow.eia --date 2025-01-15
 
 `--env-file .env` loads the key, and `--date` selects the UTC operating day. The check requests all three series and reports counts, first and last EIA timestamps, and units. For this date, each series should show 24 hour endings from `2025-01-15T01` through `2025-01-16T00` and units of megawatthours.
 
-To save a fresh sanitized capture, use `--snapshot` with a new path. `mktemp -d` creates a temporary directory so the command can be repeated without replacing an existing fixture.
+The final lines confirm the total number of observations and tell you whether the output was a terminal summary or a saved JSON file. To save a fresh sanitized capture, use `--snapshot` with a new path. `mktemp -d` creates a temporary directory so the command can be repeated without replacing an existing fixture.
 
 ```sh
 snapshot_dir=$(mktemp -d)

@@ -60,7 +60,7 @@ The live smoke run confirmed 24 observations per series, the final midnight boun
 
 Call `normalize_series(metric, utc_date, rows)` from `renewflow.transform` with the rows from the extractor or replay fixture. The result contains 24 sorted observations with UTC-aware hour starts and exact `Decimal` MWh values, plus input, duplicate, and negative generation counts. A `ValidationError` prevents later publication of an invalid or incomplete day.
 
-Run `uv run --locked pytest` to check the real capture and validation cases offline after installing dependencies. This session verified the lock and built the wheel. The Pandas tests still need a runtime check because the session could not download Pandas or pytest.
+Run `uv run --locked pytest` to check the real capture and validation cases offline after installing dependencies. The full suite passed, and the README replay validated all 72 observations from the real capture.
 
 ### Phase 5 scheduling
 
