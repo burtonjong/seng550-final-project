@@ -1,0 +1,16 @@
+[project]
+name = "renewflow"
+version = "0.1.0"
+description = "Hourly renewable generation and demand ETL"
+requires-python = ">=3.12,<3.13"
+dependencies = ["pandas>=3.0.6,<4", "requests>=2.32.4,<3"]
+
+[dependency-groups]
+dev = ["pytest>=9.0.3,<10"]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

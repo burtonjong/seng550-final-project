@@ -1,0 +1,550 @@
+{
+  "utc_date": "2025-01-15",
+  "captured_at_utc": "2026-11-18T20:15:15+00:00",
+  "frequency": "hourly",
+  "series": {
+    "solar": {
+      "route": "electricity/rto/fuel-type-data/data/",
+      "facets": {
+        "respondent": "CISO",
+        "fueltype": "SUN"
+      },
+      "apiVersion": "2.1.14",
+      "response": {
+        "total": 24,
+        "data": [
+          {
+            "period": "2025-01-15T01",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "9562",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T02",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "2261",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T03",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-52",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T04",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-56",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T05",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-54",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T06",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-53",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T07",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-53",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T08",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-52",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T09",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-52",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T10",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-52",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T11",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-52",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T12",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-53",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T13",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-53",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T14",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-53",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T15",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-53",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T16",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "-34",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T17",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "2542",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T18",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "10278",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T19",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "13357",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T20",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "13327",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T21",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "13134",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T22",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "13355",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T23",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "13081",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-16T00",
+            "respondent": "CISO",
+            "fueltype": "SUN",
+            "value": "11272",
+            "value-units": "megawatthours"
+          }
+        ]
+      }
+    },
+    "wind": {
+      "route": "electricity/rto/fuel-type-data/data/",
+      "facets": {
+        "respondent": "CISO",
+        "fueltype": "WND"
+      },
+      "apiVersion": "2.1.14",
+      "response": {
+        "total": 24,
+        "data": [
+          {
+            "period": "2025-01-15T01",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1054",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T02",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "893",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T03",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "721",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T04",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "711",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T05",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "721",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T06",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "712",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T07",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "760",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T08",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "735",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T09",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "812",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T10",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "889",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T11",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "956",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T12",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1133",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T13",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1165",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T14",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1200",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T15",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1267",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T16",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1242",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T17",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1236",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T18",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1173",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T19",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1155",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T20",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1033",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T21",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1020",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T22",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1164",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T23",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "1467",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-16T00",
+            "respondent": "CISO",
+            "fueltype": "WND",
+            "value": "2229",
+            "value-units": "megawatthours"
+          }
+        ]
+      }
+    },
+    "demand": {
+      "route": "electricity/rto/region-data/data/",
+      "facets": {
+        "respondent": "CISO",
+        "type": "D"
+      },
+      "apiVersion": "2.1.14",
+      "response": {
+        "total": 24,
+        "data": [
+          {
+            "period": "2025-01-15T01",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "23631",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T02",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "24559",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T03",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "26742",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T04",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "27001",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T05",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "26722",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T06",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "26299",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T07",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "25647",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T08",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "24256",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T09",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "22666",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T10",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "22224",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T11",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "21906",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T12",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "22128",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T13",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "21791",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T14",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "21645",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T15",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "23241",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T16",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "25694",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T17",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "27298",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T18",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "27956",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T19",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "26712",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T20",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "25278",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T21",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "24047",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T22",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "23718",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-15T23",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "24075",
+            "value-units": "megawatthours"
+          },
+          {
+            "period": "2025-01-16T00",
+            "respondent": "CISO",
+            "type": "D",
+            "value": "24227",
+            "value-units": "megawatthours"
+          }
+        ]
+      }
+    }
+  }
+}
