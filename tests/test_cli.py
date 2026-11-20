@@ -98,3 +98,46 @@ def test_snapshot_requires_all_three_series(tmp_path, monkeypatch, loader, capsy
     assert error.value.code == 1
     loader.assert_not_called()
     assert "snapshot with all three series" in capsys.readouterr().err
+
+
+def test_replay_manifest_retries_only_the_failed_stage(tmp_path, monkeypatch, loader, capsys):
+    capture = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+    snapshots = {}
+    # Shift the real fixture labels to exercise three dates without making live requests.
+    for offset in (2, 1, 0):
+        day = DAY + timedelta(days=offset)
+        copy = json.loads(json.dumps(capture))
+        copy["utc_date"] = day.isoformat()
+        for source in copy["series"].values():
+            for row in source["response"]["data"]:
+                label, hour = row["period"].split("T")
+                row["period"] = f"{date.fromisoformat(label) + timedelta(days=offset)}T{hour}"
+        path = tmp_path / f"{day}.json"
+        path.write_text(json.dumps(copy), encoding="utf-8")
+        snapshots[day.isoformat()] = path.name
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"snapshots": snapshots}), encoding="utf-8")
+    monkeypatch.delenv("EIA_API_KEY", raising=False)
+    wait = Mock()
+    monkeypatch.setattr(cli, "sleep", wait)
+    monkeypatch.setattr(
+        sys, "argv", ["renewflow", "--replay-manifest", str(manifest), "--fail-first", "2025-01-16:wind"]
+    )
+
+    cli.main()
+
+    assert [call.args[1]["hour_start_utc"].iloc[0].date() for call in loader.call_args_list] == [
+        DAY, DAY + timedelta(days=1), DAY + timedelta(days=2)
+    ]
+    wait.assert_called_once_with(5)
+    events = [
+        json.loads(line.removeprefix("renewflow_event "))
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("renewflow_event ")
+    ]
+    faults = [event for event in events if event["status"] == "failed"]
+    assert [(event["utc_date"], event["stage"], event["attempt"], event["error_category"]) for event in faults] == [
+        ("2025-01-16", "extract_wind", 1, "RetryableEIAError")
+    ]
+    assert len([event for event in events if event["stage"] == "extract_wind" and event["status"] == "success"]) == 3
+    assert events[-1]["days_published"] == 3

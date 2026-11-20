@@ -1,0 +1,9 @@
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!src/
+!src/**
+!docker/
+!docker/airflow_bootstrap.py
+**/__pycache__

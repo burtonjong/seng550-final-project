@@ -1,5 +1,7 @@
 """Store validated RenewFlow observations in PostgreSQL."""
 
+import os
+
 import pandas as pd
 import psycopg
 
@@ -11,6 +13,21 @@ _UPSERT = """
     SET value_mwh = EXCLUDED.value_mwh
     WHERE hourly_observations.value_mwh IS DISTINCT FROM EXCLUDED.value_mwh
 """
+
+
+def connect_observations() -> psycopg.Connection:
+    password = os.environ.get("POSTGRES_PASSWORD")
+    if not password:
+        raise ValueError("set POSTGRES_PASSWORD in the runtime environment")
+    return psycopg.connect(
+        host=os.environ.get("POSTGRES_HOST") or "127.0.0.1",
+        port=os.environ.get("POSTGRES_PORT") or "5432",
+        dbname=os.environ.get("POSTGRES_DB") or "renewflow",
+        user=os.environ.get("POSTGRES_USER") or "renewflow",
+        password=password,
+        connect_timeout=5,
+        autocommit=True,
+    )
 
 
 def load_day(connection: psycopg.Connection, observations: pd.DataFrame) -> int:

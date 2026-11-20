@@ -2,7 +2,7 @@
 
 This project collects hourly solar generation, wind generation, and electricity demand for the California ISO from the U.S. Energy Information Administration (EIA).
 
-The local demo loads a real EIA capture into PostgreSQL and exports hourly, daily, and seasonal analytics. The sequential runner can also fetch and load live historical dates. Airflow scheduling is a later milestone in the [implementation plan](docs/IMPLEMENTATION_PLAN.md).
+The local demo loads a real EIA capture into PostgreSQL and exports hourly, daily, and seasonal analytics. Run the pipeline from the sequential CLI or the Airflow DAG. See the [implementation plan](docs/IMPLEMENTATION_PLAN.md) for progress and verification status.
 
 ## Set up the project
 
@@ -103,7 +103,56 @@ uv run --locked --env-file .env python -m renewflow.cli \
 
 The runner commits each complete day separately. If EIA returns incomplete data or the database write fails, the runner exits with an error and keeps the days it has already committed. Repeating the date range can apply revised values to rows with the same key.
 
-When you're done using PostgreSQL, `docker compose stop postgres` stops the service and keeps the database volume for the next run.
+When you're done with the PostgreSQL-only demo, `docker compose stop postgres` stops the service and keeps its database volume.
+
+## Run Airflow locally
+
+Start with the [local PostgreSQL setup](#run-the-local-postgresql-demo) through the schema command. Set `AIRFLOW_DB_PASSWORD`, `AIRFLOW_UI_PASSWORD`, and `AIRFLOW_JWT_SECRET` in the ignored `.env`. Generate the JWT secret with `openssl rand -hex 32`. Keep `AIRFLOW_DB_PASSWORD` consistent across starts with the same PostgreSQL volume.
+
+```sh
+docker compose -f compose.yaml -f compose.airflow.yaml up -d --build --wait
+docker compose -f compose.yaml -f compose.airflow.yaml exec -T airflow-dag-processor \
+  airflow dags list-import-errors
+```
+
+The overlay starts Airflow 3.3.2 with `LocalExecutor`, the API server, and the DAG processor. The initialization job creates the PostgreSQL metadata database and role if needed. Open `http://localhost:8080` and sign in as `renewflow` using `AIRFLOW_UI_PASSWORD`. If that port is busy, set `AIRFLOW_UI_PORT` in `.env` before starting the stack.
+
+### Replay one day in the DAG
+
+Unpause `renewflow_daily` in the UI, then trigger a replay from the terminal:
+
+```sh
+docker compose -f compose.yaml -f compose.airflow.yaml exec -T airflow-scheduler \
+  airflow dags trigger renewflow_daily \
+  --conf '{"observation_date":"2025-01-15","replay_manifest":"replay-manifest.json"}'
+```
+
+The DAG reads the included manifest and real EIA fixture from the read-only replay mount. In the Grid view, confirm that `extract_solar`, `extract_wind`, and `extract_demand` succeed before `load_day`. An empty observation table gets 72 rows. If you already loaded the fixture with the sequential CLI, the load reports zero changed rows. Both runners log `renewflow_event` records with stage, attempt, duration, and row counts. The replay needs only local PostgreSQL. Automatic runs use live EIA and require `EIA_API_KEY`.
+
+For a controlled retry, add `"fail_first":"2025-01-15:wind"` to the run configuration. The first wind attempt fails, and that task retries while Airflow retains successful solar and demand work. Confirm the failed and successful attempts in the wind task log and check the final row counts. The sequential comparison accepts the same fault target through `--fail-first`:
+
+```sh
+uv run --locked --env-file .env python -m renewflow.cli \
+  --replay-manifest tests/fixtures/replay-manifest.json --fail-first 2025-01-15:wind
+```
+
+### Backfill a UTC range in Airflow
+
+For a multi-day replay, put the sanitized daily snapshots and a manifest under `RENEWFLOW_REPLAY_DIR` before starting the stack. Follow the [sample manifest](tests/fixtures/replay-manifest.json) and list every requested UTC date with its relative snapshot filename. The sequential CLI can replay the whole manifest in order or select a subrange with `--start-date` and `--end-date`.
+
+At 19:00 UTC on January 16, the scheduled DAG processes January 15. In Airflow's backfill CLI, the logical date is the interval start, so the logical date for January 15 observations is January 15 at 19:00 UTC. For January 15 through 17, first check that the dry run lists the three logical dates:
+
+```sh
+docker compose -f compose.yaml -f compose.airflow.yaml exec -T airflow-scheduler \
+  airflow backfill create --dag-id renewflow_daily \
+  --from-date 2025-01-15T19:00:00+00:00 --to-date 2025-01-17T19:00:00+00:00 \
+  --max-active-runs 1 --reprocess-behavior completed --dry-run \
+  --dag-run-conf '{"replay_manifest":"manifest.json"}'
+```
+
+After verifying the dates and the manifest paths, repeat the command with `--dry-run` removed. Omit `--dag-run-conf` for a live EIA backfill with the API key set. For benchmarks, use an isolated observations database and record the exact manifest, Airflow task slots and active-run limit, and initial database state.
+
+To stop the stack while retaining its volumes, run `docker compose -f compose.yaml -f compose.airflow.yaml stop`.
 
 ## Preview validation offline
 

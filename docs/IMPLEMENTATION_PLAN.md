@@ -74,7 +74,9 @@ Apply [the hourly and daily views](../sql/analytics.sql) after the observations 
 
 ### Phase 5 scheduling
 
-For phase 5, use an explicit UTC cron timetable at `0 19 * * *` and derive the observation date from `data_interval_end` for scheduled and native backfill runs. Proposed default is `CronDataIntervalTimetable` with `catchup=False` and a fixed, UTC-aware start date that allows the chosen historical windows. The CLI accepts `[start_date, end_date)`. For native Airflow backfills, document the translation from that date range to the pinned version's logical-date bounds and verify it with a dry run and a three-day integration run. A manual single-day run takes an explicit observation date. [Airflow timetables](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/timetable.html), [Airflow backfills](https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/backfill.html)
+The Airflow 3.3.2 DAG uses `CronDataIntervalTimetable` at `0 19 * * *` UTC with `catchup=False`. Scheduled and backfill runs derive the observation date from `data_interval_end` and manual runs take an explicit date. The [local Airflow instructions](../README.md#run-airflow-locally) document the logical-date translation, shared replay manifest, logging, and a controlled transient retry. Both runners allow two extract retries at a five-second delay. Airflow records run-level state in its metadata and the Python CLI emits a run summary alongside the shared stage records. [Airflow timetables](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/timetable.html), [Airflow backfills](https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/backfill.html)
+
+Host-side tests cover the UTC date rule and three-day sequential replay with a controlled retry. The Docker image build, Airflow scheduler run, three-day output comparison, and Airflow retry under the scheduler still need verification on a machine with access to the Docker daemon.
 
 ### Optional cloud phase
 
@@ -86,7 +88,7 @@ After the local deliverables work, an optional cloud phase can expose sanitized 
 
 ### Compare the same work
 
-The Python CLI already supports a live date range and one saved UTC day. Its current tests cover range boundaries and stopping before an incomplete day is loaded. Airflow, multi-day replay, common telemetry, and the benchmark runner still need to be built. PostgreSQL integration checks for upserts and rollback need a running test database.
+The two runners share the UTC date and replay conventions, validation and loading functions, and per-stage telemetry. The benchmark runner and measurement artifacts remain in Phase 6. The Airflow scheduler and PostgreSQL acceptance checks need a running local stack.
 
 - Share one snapshot reader keyed by UTC date. The sequential CLI iterates the manifest in date order, and each Airflow run reads the entry for its observation date. Both use the same per-series validation and transactional loader. For timing, replay reads saved response data locally. Report live EIA timing separately because it includes network and provider variability.
 - Treat solar, wind, and demand extraction with validation, plus the daily PostgreSQL load, as the four comparable stages. Python runs them in order. Airflow may run the three series concurrently and waits for all to validate before loading. Compare committed `(respondent, hour_start_utc, metric, value_mwh)` rows and hourly and daily SQL outputs for identical inputs.
@@ -106,7 +108,7 @@ Log comparable stage and attempt records from both paths with a trial ID, date, 
 
 Use the same historical inputs and inject faults at the same stage and date for each runner. Run the fault comparisons separately from clean timing trials.
 
-1. Fail one extract attempt transiently. Give each runner the same retry budget and delay for this controlled comparison. Add stage-local retry handling to the sequential runner as needed and use Airflow's task retry policy for the DAG. Verify the final rows match the clean run.
+1. Fail one extract attempt transiently. Use the same replay fault target and shared retry count and delay. Verify the final rows match the clean run.
 2. Remove an expected hour in a labeled copy of the replay payload. Verify both runners report the validation failure and preserve any previously committed batch for that date.
 3. Interrupt a run after a successful stage and before the daily commit. Record which stages Airflow can reuse and which the sequential CLI reruns. Use the same recovery procedure timing across trials and verify no partial or duplicate rows remain.
 
@@ -130,4 +132,4 @@ Use the same historical inputs and inject faults at the same stage and date for 
 
 Target a complete local rehearsal and code freeze by **November 30, 2026**, as a proposed internal milestone. The demo ZIP is due on **December 1, 2026, at 11:59 PM** via D2L. The in-person demo is **December 2, 2026, 8:00–9:50 AM in ENA 305** and assesses working code and each member's ability to execute and explain their own contribution. Name the ZIP using `Group Number SENG550 ProjectTitle Demo` with the approved title and group number. Include source and supporting files needed for the demo, plus setup and verification instructions.
 
-For the December 4 report and recording, retain the measured outputs, source citations, architectural rationale, and individual contribution notes from the implementation. OpenAI Codex assisted with repository inspection, documentation research, planning, the extractor and validator, the sequential runner and PostgreSQL loader, the SQL analytics and exports, their tests, and the local setup instructions. Each contributor should record the AI assistance and external sources applicable to their own work and independently verify the material they use or present.
+For the December 4 report and recording, retain the measured outputs, source citations, architectural rationale, and individual contribution notes from the implementation. OpenAI Codex assisted with repository inspection, documentation research, planning, the extractor and validator, the sequential runner and PostgreSQL loader, SQL analytics, Airflow orchestration, replay and telemetry, tests, and local setup instructions. Each contributor should record the AI assistance and external sources applicable to their own work and independently verify the material they use or present.
