@@ -40,7 +40,7 @@ Keep the Airflow metadata database and RenewFlow data in separate databases with
 | 2. Validation and normalization | Pandas transformation independent of Airflow and PostgreSQL | Cover midnight and a local daylight-saving transition, missing hours, malformed values, mismatched units or series, identical and conflicting duplicates, and the signed-value policy. A complete CISO day produces 24 unique slots per series. |
 | 3. Storage and sequential baseline | Compose PostgreSQL, schema, shared psycopg load, and a Python command that processes explicit UTC dates one day at a time | Load a recorded day, rerun it, and compare key and value sets. Refresh one revised value, then test rollback after an injected write failure. Confirm a historical range processes the expected daily windows. |
 | 4. SQL analytics | Hourly and daily views plus a reproducible local chart or export covering energy profiles | Verify time buckets, known sums, peak demand, and the ratio of totals using a fixture. Produce an hourly comparison and a seasonal or daily profile from real history with coverage counts. |
-| 5. Airflow and recovery | Compose Airflow 3.x, daily DAG, per-attempt telemetry in both runners, and parameterized backfills | Verify three independently executable extract tasks and a successful daily load under the running scheduler. Test the 19:00 UTC mapping for scheduled, delayed, and retried runs. Backfill several UTC days, compare with sequential output, and demonstrate a transient failure recovering without duplicate rows. |
+| 5. Airflow and recovery | Compose Airflow 3.x, daily DAG, shared multi-day replay, per-attempt telemetry in both runners, and parameterized backfills | Verify three independently executable extract-and-validate tasks and a successful daily load under the running scheduler. Test the 19:00 UTC mapping for scheduled, delayed, and retried runs. Replay the same three observation dates through both runners, compare stored rows and analytics, and recover from a transient fault without duplicate rows. |
 | 6. Experiments and demo | Snapshot manifest, benchmark runner, raw outputs, figures, and local walkthrough | Execute the paired experiments, confirm output equivalence and failure behavior, and rehearse the submitted code on a clean local setup. Verify the demo can replay with no EIA key after images and the snapshot are available. |
 
 ### Phase 1 development commands
@@ -68,23 +68,53 @@ See the [local PostgreSQL demo](../README.md#run-the-local-postgresql-demo) for 
 
 The unit suite and Compose configuration checks passed. The PostgreSQL integration tests still need a running test database.
 
+### Phase 4 energy analytics
+
+Apply [the hourly and daily views](../sql/analytics.sql) after the observations schema. Use the [CSV export instructions](../README.md#export-energy-analytics) to reproduce hourly, daily, and [seasonal summaries](../sql/seasonal_profile.sql) from loaded EIA data. Integration checks cover UTC grouping from a Pacific time session, known fixture totals, peak demand, the ratio of daily totals, and exclusion of incomplete days from the seasonal profile. Run these checks once a PostgreSQL test database is available.
+
 ### Phase 5 scheduling
 
 For phase 5, use an explicit UTC cron timetable at `0 19 * * *` and derive the observation date from `data_interval_end` for scheduled and native backfill runs. Proposed default is `CronDataIntervalTimetable` with `catchup=False` and a fixed, UTC-aware start date that allows the chosen historical windows. The CLI accepts `[start_date, end_date)`. For native Airflow backfills, document the translation from that date range to the pinned version's logical-date bounds and verify it with a dry run and a three-day integration run. A manual single-day run takes an explicit observation date. [Airflow timetables](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/timetable.html), [Airflow backfills](https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/backfill.html)
 
 ### Optional cloud phase
 
+Hosted PostgreSQL deployment is deferred until near the end of the project, if needed. The local Docker Compose database remains the development and demo target. Running the PostgreSQL integration suite is still an open acceptance check. A local test database can satisfy that check ahead of hosted deployment.
+
 After the local deliverables work, an optional cloud phase can expose sanitized attempt events in PostgreSQL and connect Grafana Cloud through PDC. Give Grafana a scoped read-only role for the energy views and pipeline metrics. Evaluate EC2 separately if continuous operation is useful. [Grafana Cloud PostgreSQL and PDC setup](https://grafana.com/docs/learning-paths/postgresql-data-source/)
 
 ## Experiment protocol
 
-1. Capture a historical EIA snapshot once. Strip echoed request credentials and retain the response fields needed for replay. Record routes, filters, capture date, periods, row and byte counts, and checksums. Both runners replay the same responses through the normal parsing, validation, and loading paths. Labeled test faults can modify transport or execution behavior while the underlying observations remain real.
-2. Start with nested CISO windows of 1, 7, 30, and 180 days, contingent on availability and run time. Declare a selection rule and document gaps and exclusions before timing. Use the same day-sized work units in both runners. If a longer range or additional respondents is needed, record the actual sample size, data quality, and resulting scope separately from the CISO demo.
-3. Use the same host, PostgreSQL settings, ETL dependency versions, starting database state, and input order definition. Warm services before timing, run several paired trials with alternating runner order, and log CPU and memory limits, Airflow concurrency, and database reset procedure. Compare sequential Python, Airflow with one active task slot, and Airflow with bounded parallelism. The latter two configurations help distinguish scheduler overhead from concurrency gains.
-4. Time from run submission or CLI launch to terminal outcome and report wall time, per-stage duration, and successfully published observations per second. Report first-attempt success per comparable task, eventual success per requested daily unit, retries, recovery time from the first recorded failure, and work repeated. Retain raw run outcomes and report median and spread with sample counts. Separate controlled replay results from any live EIA timings. Use PostgreSQL query timing or resource measurements if needed for the course rubric.
-5. Use deterministic faults in matched stages. Exercise a transient extract failure with equivalent attempt budgets and backoff, a permanent data-quality failure that leaves the target day unmodified, and an interrupted run after some stages succeed. Record the recovery mechanism used by each runner, including Airflow task retry or resume and sequential CLI rerun. Check database contents and equivalent hourly and daily results against a clean run before comparing performance.
+### Compare the same work
 
-This experiment measures day-level and series-level parallel work on one host. Use the recorded task count, row count, and resource limits when interpreting the results and discussing where network, PostgreSQL, or scheduler overhead may dominate.
+The Python CLI already supports a live date range and one saved UTC day. Its current tests cover range boundaries and stopping before an incomplete day is loaded. Airflow, multi-day replay, common telemetry, and the benchmark runner still need to be built. PostgreSQL integration checks for upserts and rollback need a running test database.
+
+- Share one snapshot reader keyed by UTC date. The sequential CLI iterates the manifest in date order, and each Airflow run reads the entry for its observation date. Both use the same per-series validation and transactional loader. For timing, replay reads saved response data locally. Report live EIA timing separately because it includes network and provider variability.
+- Treat solar, wind, and demand extraction with validation, plus the daily PostgreSQL load, as the four comparable stages. Python runs them in order. Airflow may run the three series concurrently and waits for all to validate before loading. Compare committed `(respondent, hour_start_utc, metric, value_mwh)` rows and hourly and daily SQL outputs for identical inputs.
+- Run three configurations on the same host and pinned ETL environment. Use sequential Python, Airflow with one active task slot, and Airflow with bounded parallelism. Warm services beforehand, start each trial with the same observation-table state, and use isolated benchmark targets. Record versions, resource limits, Airflow task slots, and active DAG run limits. Alternate trial order and retain every result with its configuration.
+- Pilot nested CISO windows of 1, 7, and 30 days. Attempt 180 days after the pilot establishes that repeated runs fit the project schedule. Declare how dates were chosen, report gaps and exclusions, and record actual days, rows, and input bytes. Capture the EIA data once, strip credentials, and record routes, filters, capture time, API version, and checksums in the manifest.
+
+### Measure outcomes
+
+| Course criterion | Evidence to record |
+| --- | --- |
+| Execution time | End-to-end wall time from CLI launch or benchmark submission until the requested workload reaches a terminal outcome. Include queue and scheduling time in the Airflow end-to-end result. Keep individual stage durations for interpretation. |
+| Task reliability | First-attempt successes divided by comparable stages attempted. Also report days successfully published divided by days requested, attempts, retries, and blocked stages. Label live smoke outcomes and controlled fault outcomes by source. |
+| Failure recovery | Time from the first recorded failure or interruption to verified publication, plus stages re-executed and whether recovery required operator action. Report terminal failures as outcomes with no recovery duration. |
+| Processing scalability | Wall time and committed observations per second by workload size and runner configuration. Calculate throughput from successfully published observations in clean trials and report median, spread, and trial count. Discuss single-host concurrency and the effect of small CISO daily batches. |
+
+Log comparable stage and attempt records from both paths with a trial ID, date, stage, attempt number, status, start and end times, duration, row counts, and sanitized error category. Use Airflow task/run metadata for scheduling and terminal state, and record unfinished attempts after interruption with unavailable fields left empty. Keep raw results so summaries can be regenerated. [Airflow public REST API](https://airflow.apache.org/docs/apache-airflow/stable/stable-rest-api-ref.html)
+
+Use the same historical inputs and inject faults at the same stage and date for each runner. Run the fault comparisons separately from clean timing trials.
+
+1. Fail one extract attempt transiently. Give each runner the same retry budget and delay for this controlled comparison. Add stage-local retry handling to the sequential runner as needed and use Airflow's task retry policy for the DAG. Verify the final rows match the clean run.
+2. Remove an expected hour in a labeled copy of the replay payload. Verify both runners report the validation failure and preserve any previously committed batch for that date.
+3. Interrupt a run after a successful stage and before the daily commit. Record which stages Airflow can reuse and which the sequential CLI reruns. Use the same recovery procedure timing across trials and verify no partial or duplicate rows remain.
+
+### Retain evidence for the IEEE report
+
+- **Methods and implementation.** Save the architecture and ETL flow diagrams, schema and SQL, the snapshot manifest, exact runner commands, and the experimental configuration. Use the approved topic title and the IEEE conference template provided on D2L.
+- **Results and discussion.** Retain raw run and attempt records, output equality checks, a runtime and throughput plot by workload size, and a table for reliability and recovery. Include an energy analytics figure from the hourly or daily views. Use units, trial counts, captions, and references for every figure or table.
+- **References and appendix.** Cite at least five relevant scholarly or technical references in IEEE style. The project specification and plan link primary EIA, Airflow, and PostgreSQL references for the implemented methods. Retain each group member's contribution statement, AI-use disclosure, and independent verification notes. Base the abstract and conclusions on completed experiments for the report's five-page minimum excluding the appendix.
 
 ## Open decisions and assumptions
 
@@ -100,4 +130,4 @@ This experiment measures day-level and series-level parallel work on one host. U
 
 Target a complete local rehearsal and code freeze by **November 30, 2026**, as a proposed internal milestone. The demo ZIP is due on **December 1, 2026, at 11:59 PM** via D2L. The in-person demo is **December 2, 2026, 8:00–9:50 AM in ENA 305** and assesses working code and each member's ability to execute and explain their own contribution. Name the ZIP using `Group Number SENG550 ProjectTitle Demo` with the approved title and group number. Include source and supporting files needed for the demo, plus setup and verification instructions.
 
-For the December 4 report and recording, retain the measured outputs, source citations, architectural rationale, and individual contribution notes from the implementation. OpenAI Codex assisted with repository inspection, documentation research, planning, the extractor and validator, the sequential runner and PostgreSQL loader, their tests, and the local setup instructions. Each contributor should record the AI assistance and external sources applicable to their own work and independently verify the material they use or present.
+For the December 4 report and recording, retain the measured outputs, source citations, architectural rationale, and individual contribution notes from the implementation. OpenAI Codex assisted with repository inspection, documentation research, planning, the extractor and validator, the sequential runner and PostgreSQL loader, the SQL analytics and exports, their tests, and the local setup instructions. Each contributor should record the AI assistance and external sources applicable to their own work and independently verify the material they use or present.

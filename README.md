@@ -2,7 +2,7 @@
 
 This project collects hourly solar generation, wind generation, and electricity demand for the California ISO from the U.S. Energy Information Administration (EIA).
 
-The local demo loads a real EIA capture into PostgreSQL. The sequential runner can also fetch and load live historical dates. SQL analytics and Airflow scheduling are later milestones in the [implementation plan](docs/IMPLEMENTATION_PLAN.md).
+The local demo loads a real EIA capture into PostgreSQL and exports hourly, daily, and seasonal analytics. The sequential runner can also fetch and load live historical dates. Airflow scheduling is a later milestone in the [implementation plan](docs/IMPLEMENTATION_PLAN.md).
 
 ## Set up the project
 
@@ -57,7 +57,40 @@ ORDER BY metric;
 SQL
 ```
 
-`docker compose stop postgres` stops the service and keeps the database volume for the next run.
+## Export energy analytics
+
+With local PostgreSQL running and observations loaded, apply the views. This command can be rerun as the views change.
+
+```sh
+docker compose exec -T postgres sh -c \
+  'psql -X -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' \
+  < sql/analytics.sql
+```
+
+Export the loaded data to three CSVs in a fresh local directory.
+
+```sh
+(
+  set -e
+  export_dir=$(mktemp -d)
+  docker compose exec -T -e PGTZ=UTC postgres sh -c \
+    'psql -X --csv -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+      -c "SELECT * FROM hourly_energy_summary ORDER BY respondent, hour_start_utc"' \
+    > "$export_dir/hourly.csv"
+  docker compose exec -T postgres sh -c \
+    'psql -X --csv -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+      -c "SELECT * FROM daily_energy_summary ORDER BY respondent, utc_date"' \
+    > "$export_dir/daily.csv"
+  docker compose exec -T postgres sh -c \
+    'psql -X --csv -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+    < sql/seasonal_profile.sql > "$export_dir/seasonal_profile.csv"
+  printf 'CSV exports saved in %s\n' "$export_dir"
+)
+```
+
+With the January 15 fixture alone, expect 24 hourly rows and one daily row. The daily row should show 589,463 MWh of demand and a peak hourly demand of 27,956 MWh. The daily solar-and-wind ratio uses the energy totals for the day. Multiply a ratio by 100 to display it as a percentage of demand.
+
+The seasonal CSV uses complete UTC days and reports how many days contribute to each hourly mean, plus their first and last dates. The fixture contributes one winter day. Load dates across multiple seasons before using the export for a seasonal comparison in the report.
 
 ## Run a live backfill
 
@@ -69,6 +102,8 @@ uv run --locked --env-file .env python -m renewflow.cli \
 ```
 
 The runner commits each complete day separately. If EIA returns incomplete data or the database write fails, the runner exits with an error and keeps the days it has already committed. Repeating the date range can apply revised values to rows with the same key.
+
+When you're done using PostgreSQL, `docker compose stop postgres` stops the service and keeps the database volume for the next run.
 
 ## Preview validation offline
 
@@ -115,7 +150,7 @@ Create a separate test database once while the Compose service is running.
 docker compose exec -T postgres sh -c 'createdb -U "$POSTGRES_USER" renewflow_test'
 ```
 
-Add `RENEWFLOW_TEST_DATABASE_URL` to `.env` with the connection URL for `renewflow_test`, for example `postgresql://renewflow:YOUR_LOCAL_PASSWORD@127.0.0.1:5432/renewflow_test`. Use your actual port and credentials, and percent-encode special characters in the password if needed. The tests create and remove isolated schemas in the test database. They check idempotent reruns, revisions, and rollback after a failed write.
+Add `RENEWFLOW_TEST_DATABASE_URL` to `.env` with the connection URL for `renewflow_test`, for example `postgresql://renewflow:YOUR_LOCAL_PASSWORD@127.0.0.1:5432/renewflow_test`. Use your actual port and credentials, and percent-encode special characters in the password if needed. The tests create and remove isolated schemas in the test database. They check idempotent reruns, revisions, rollback, and SQL analytics. Hosted PostgreSQL deployment is deferred until near the end of the project. A running local test database is sufficient for the pending integration checks.
 
 ```sh
 uv run --locked --env-file .env pytest -m postgres
