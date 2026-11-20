@@ -1,3 +1,31 @@
+x-airflow: &airflow
+  profiles: [airflow]
+  build: .
+  image: renewflow-airflow:3.3.2
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__PARALLELISM: ${AIRFLOW_PARALLELISM:-4}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: renewflow:admin
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/local/passwords.json
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: python /opt/airflow/airflow_bootstrap.py metadata-url
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api:8080/execution/
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-}
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW_JWT_SECRET:-}
+    AIRFLOW_DB_PASSWORD: ${AIRFLOW_DB_PASSWORD:-}
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: ${POSTGRES_DB:-renewflow}
+    POSTGRES_USER: ${POSTGRES_USER:-renewflow}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    EIA_API_KEY: ${EIA_API_KEY:-}
+  volumes:
+    - ./dags:/opt/airflow/dags:ro
+    - ${RENEWFLOW_REPLAY_DIR:-./tests/fixtures}:/opt/airflow/replay:ro
+    - airflow_logs:/opt/airflow/logs
+    - airflow_local:/opt/airflow/local
+
 services:
   postgres:
     image: postgres:18
@@ -15,5 +43,45 @@ services:
       timeout: 3s
       retries: 12
 
+  airflow-init:
+    <<: *airflow
+    environment:
+      <<: *airflow-env
+      AIRFLOW_UI_PASSWORD: ${AIRFLOW_UI_PASSWORD:-}
+    command: ["bash", "-c", "python /opt/airflow/airflow_bootstrap.py && exec airflow db migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-api:
+    <<: *airflow
+    command: api-server
+    ports:
+      - "127.0.0.1:${AIRFLOW_UI_PORT:-8080}:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  airflow-scheduler:
+    <<: *airflow
+    command: scheduler
+    depends_on:
+      airflow-api:
+        condition: service_healthy
+
+  airflow-dag-processor:
+    <<: *airflow
+    command: dag-processor
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
 volumes:
   postgres_data:
+  airflow_logs:
+  airflow_local:

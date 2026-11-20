@@ -74,6 +74,8 @@ Apply [the hourly and daily views](../sql/analytics.sql) after the observations 
 
 ### Phase 5 scheduling
 
+The default Compose startup runs PostgreSQL for the sequential baseline. The `airflow` profile enables the scheduler, DAG processor, and API server alongside it. [Docker Compose profiles](https://docs.docker.com/compose/how-tos/profiles/)
+
 The Airflow 3.3.2 DAG uses `CronDataIntervalTimetable` at `0 19 * * *` UTC with `catchup=False`. Scheduled and backfill runs derive the observation date from `data_interval_end` and manual runs take an explicit date. The [local Airflow instructions](../README.md#run-airflow-locally) document the logical-date translation, shared replay manifest, logging, and a controlled transient retry. Both runners allow two extract retries at a five-second delay. Airflow records run-level state in its metadata and the Python CLI emits a run summary alongside the shared stage records. [Airflow timetables](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/timetable.html), [Airflow backfills](https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/backfill.html)
 
 Host-side tests cover the UTC date rule and three-day sequential replay with a controlled retry. The Docker image build, Airflow scheduler run, three-day output comparison, and Airflow retry under the scheduler still need verification on a machine with access to the Docker daemon.

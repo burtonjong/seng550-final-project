@@ -8,6 +8,15 @@ from urllib.parse import quote
 
 
 def initialize() -> None:
+    required = {
+        "AIRFLOW_DB_PASSWORD": "AIRFLOW_DB_PASSWORD",
+        "AIRFLOW_UI_PASSWORD": "AIRFLOW_UI_PASSWORD",
+        "AIRFLOW__API_AUTH__JWT_SECRET": "AIRFLOW_JWT_SECRET",
+    }
+    missing = [setting for variable, setting in required.items() if not os.environ.get(variable, "").strip()]
+    if missing:
+        raise SystemExit(f"Set {', '.join(missing)} in .env before starting Airflow")
+
     import psycopg
     from psycopg import sql
 

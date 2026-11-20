@@ -17,7 +17,7 @@ uv sync --locked
 
 ## Run the local PostgreSQL demo
 
-Start Docker with Compose available. Python runs on your machine through `uv`. PostgreSQL 18 runs in a container with a named volume and a port bound to `127.0.0.1`.
+Start Docker with Compose available. Python runs on your machine through `uv`. The default Compose startup runs PostgreSQL 18 with a named volume and a port bound to `127.0.0.1`. Enable the `airflow` profile when you want to run the DAG.
 
 Create `.env` from `.env.example` if you need it, then set `POSTGRES_PASSWORD` to a local password. If you already have a `.env` with your EIA key, add the PostgreSQL settings to that file. `POSTGRES_DB` and `POSTGRES_USER` default to `renewflow`. If port `5432` is busy, set `POSTGRES_PORT=5433` in `.env` so both Compose and Python use the new local port.
 
@@ -30,7 +30,7 @@ fi
 Start PostgreSQL and apply the schema. `--wait` waits for the database health check. The schema command can be rerun on the same database.
 
 ```sh
-docker compose up -d --wait postgres
+docker compose up -d --wait
 docker compose exec -T postgres sh -c \
   'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < sql/schema.sql
 ```
@@ -110,19 +110,19 @@ When you're done with the PostgreSQL-only demo, `docker compose stop postgres` s
 Start with the [local PostgreSQL setup](#run-the-local-postgresql-demo) through the schema command. Set `AIRFLOW_DB_PASSWORD`, `AIRFLOW_UI_PASSWORD`, and `AIRFLOW_JWT_SECRET` in the ignored `.env`. Generate the JWT secret with `openssl rand -hex 32`. Keep `AIRFLOW_DB_PASSWORD` consistent across starts with the same PostgreSQL volume.
 
 ```sh
-docker compose -f compose.yaml -f compose.airflow.yaml up -d --build --wait
-docker compose -f compose.yaml -f compose.airflow.yaml exec -T airflow-dag-processor \
+docker compose --profile airflow up -d --build --wait
+docker compose --profile airflow exec -T airflow-dag-processor \
   airflow dags list-import-errors
 ```
 
-The overlay starts Airflow 3.3.2 with `LocalExecutor`, the API server, and the DAG processor. The initialization job creates the PostgreSQL metadata database and role if needed. Open `http://localhost:8080` and sign in as `renewflow` using `AIRFLOW_UI_PASSWORD`. If that port is busy, set `AIRFLOW_UI_PORT` in `.env` before starting the stack.
+The `airflow` profile starts PostgreSQL and Airflow 3.3.2 with `LocalExecutor`, the API server, and the DAG processor. The initialization job creates the PostgreSQL metadata database and role if needed. Open `http://localhost:8080` and sign in as `renewflow` using `AIRFLOW_UI_PASSWORD`. If that port is busy, set `AIRFLOW_UI_PORT` in `.env` before starting the stack.
 
 ### Replay one day in the DAG
 
 Unpause `renewflow_daily` in the UI, then trigger a replay from the terminal:
 
 ```sh
-docker compose -f compose.yaml -f compose.airflow.yaml exec -T airflow-scheduler \
+docker compose --profile airflow exec -T airflow-scheduler \
   airflow dags trigger renewflow_daily \
   --conf '{"observation_date":"2025-01-15","replay_manifest":"replay-manifest.json"}'
 ```
@@ -143,7 +143,7 @@ For a multi-day replay, put the sanitized daily snapshots and a manifest under `
 At 19:00 UTC on January 16, the scheduled DAG processes January 15. In Airflow's backfill CLI, the logical date is the interval start, so the logical date for January 15 observations is January 15 at 19:00 UTC. For January 15 through 17, first check that the dry run lists the three logical dates:
 
 ```sh
-docker compose -f compose.yaml -f compose.airflow.yaml exec -T airflow-scheduler \
+docker compose --profile airflow exec -T airflow-scheduler \
   airflow backfill create --dag-id renewflow_daily \
   --from-date 2025-01-15T19:00:00+00:00 --to-date 2025-01-17T19:00:00+00:00 \
   --max-active-runs 1 --reprocess-behavior completed --dry-run \
@@ -152,7 +152,7 @@ docker compose -f compose.yaml -f compose.airflow.yaml exec -T airflow-scheduler
 
 After verifying the dates and the manifest paths, repeat the command with `--dry-run` removed. Omit `--dag-run-conf` for a live EIA backfill with the API key set. For benchmarks, use an isolated observations database and record the exact manifest, Airflow task slots and active-run limit, and initial database state.
 
-To stop the stack while retaining its volumes, run `docker compose -f compose.yaml -f compose.airflow.yaml stop`.
+To keep PostgreSQL running for the Python baseline, stop the Airflow services with `docker compose --profile airflow stop airflow-scheduler airflow-dag-processor airflow-api`. To stop the full stack while retaining its volumes, run `docker compose --profile airflow stop`.
 
 ## Preview validation offline
 
