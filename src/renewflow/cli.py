@@ -101,7 +101,10 @@ def main() -> None:
         with record_attempt(print, runner="python", run_id=run_id, stage="run") as run_counts:
             run_counts["days_requested"] = len(dates)
             run_counts["days_published"] = 0
-            with requests.Session() as session, connect_observations() as connection:
+            with (
+                requests.Session() as session,
+                connect_observations(benchmark_schema=os.environ.get("RENEWFLOW_BENCHMARK_SCHEMA")) as connection,
+            ):
                 for current_day in dates:
                     results = [
                         _extract(session, current_day, metric, snapshots.get(current_day), api_key, fault, run_id)

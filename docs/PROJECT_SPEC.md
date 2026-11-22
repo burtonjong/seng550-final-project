@@ -47,6 +47,6 @@ EIA publishes observations using the hour-ending convention and documents report
 
 ## Experimental acceptance
 
-Use the sequential Python runner as the baseline and the scheduled Airflow DAG as the orchestrated implementation. Both must perform the same three per-series extraction and validation stages and the same daily PostgreSQL load. Replay identical real historical EIA captures through the shared validation and loading functions. The daily job and the benchmark backfills must use the same observation date and publication rules.
+Use the sequential Python runner as the baseline and manually submitted Airflow backfills for the orchestrated comparison. Keep the 19:00 UTC schedule for ongoing ingestion. Both runners perform the same three per-series extraction and validation stages and the same daily PostgreSQL load. For the demo and timed experiments, replay identical real historical EIA captures. The comparison uses nested workloads of 1, 7, 30, 365, and 730 days where coverage and trial time permit.
 
 Evaluate execution time, task reliability, failure recovery, and processing scalability. Require output equivalence and transactional integrity before interpreting speed. Discuss source-quality exclusions, scheduling overhead, and the scope of single-host task parallelism. The [experiment protocol](IMPLEMENTATION_PLAN.md#experiment-protocol) defines the controls, metrics, and evidence needed for the IEEE report.

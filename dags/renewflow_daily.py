@@ -84,7 +84,7 @@ def publish_day(solar: dict, wind: dict, demand: dict) -> None:
 
     from renewflow.db import connect_observations, load_day
 
-    day, run_id, attempt, _ = _run_context()
+    day, run_id, attempt, conf = _run_context()
     try:
         with record_attempt(
             log.info, runner="airflow", run_id=run_id, stage="load_day", day=day, attempt=attempt,
@@ -100,7 +100,10 @@ def publish_day(solar: dict, wind: dict, demand: dict) -> None:
             ]
             batch = pd.concat(frames, ignore_index=True)
             counts["rows_validated"] = len(batch)
-            with connect_observations() as connection:
+            schema = conf.get("benchmark_schema")
+            if schema is not None and (not isinstance(schema, str) or not conf.get("replay_manifest")):
+                raise ValueError("benchmark_schema requires a replay manifest and a schema name")
+            with connect_observations(benchmark_schema=schema) as connection:
                 counts["rows_changed"] = load_day(connection, batch)
     except psycopg.Error as error:
         code = f" (SQLSTATE {error.sqlstate})" if error.sqlstate else ""

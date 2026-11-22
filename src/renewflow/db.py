@@ -1,6 +1,7 @@
 """Store validated RenewFlow observations in PostgreSQL."""
 
 import os
+import re
 
 import pandas as pd
 import psycopg
@@ -15,18 +16,25 @@ _UPSERT = """
 """
 
 
-def connect_observations() -> psycopg.Connection:
+def connect_observations(*, benchmark_schema: str | None = None) -> psycopg.Connection:
     password = os.environ.get("POSTGRES_PASSWORD")
     if not password:
         raise ValueError("set POSTGRES_PASSWORD in the runtime environment")
+    database = os.environ.get("POSTGRES_DB") or "renewflow"
+    options = {}
+    if benchmark_schema is not None:
+        if database != "renewflow_benchmark" or not re.fullmatch(r"trial_[0-9a-f]{32}", benchmark_schema):
+            raise ValueError("benchmark schemas require the dedicated renewflow_benchmark database")
+        options["options"] = f"-c search_path={benchmark_schema}"
     return psycopg.connect(
         host=os.environ.get("POSTGRES_HOST") or "127.0.0.1",
         port=os.environ.get("POSTGRES_PORT") or "5432",
-        dbname=os.environ.get("POSTGRES_DB") or "renewflow",
+        dbname=database,
         user=os.environ.get("POSTGRES_USER") or "renewflow",
         password=password,
         connect_timeout=5,
         autocommit=True,
+        **options,
     )
 
 

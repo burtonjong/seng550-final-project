@@ -146,6 +146,30 @@ def _check_smoke_result(metric: str, result: SeriesExtract, expected: list[str])
         raise EIAError(f"{metric} returned a mismatched series identifier")
 
 
+def save_snapshot(path: Path, day: date, extracts: dict[str, SeriesExtract], *, api_key: str) -> None:
+    series = {}
+    for metric, (route, facet, code) in SERIES.items():
+        result = extracts[metric]
+        series[metric] = {
+            "route": route,
+            "facets": {"respondent": RESPONDENT, facet: code},
+            "apiVersion": result.api_version,
+            "response": {"total": len(result.rows), "data": result.rows},
+        }
+    capture = {
+        "utc_date": day.isoformat(),
+        "captured_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        "frequency": "hourly",
+        "series": series,
+    }
+    contents = json.dumps(capture, indent=2) + "\n"
+    if api_key and api_key in contents:
+        raise EIAError("snapshot contains an API key")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x", encoding="utf-8") as output:
+        output.write(contents)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--date", type=date.fromisoformat, required=True, help="UTC operating date")
@@ -159,32 +183,16 @@ def main() -> None:
     try:
         expected = _hour_endings(args.date)
         with requests.Session() as session:
-            for metric, (route, facet, code) in SERIES.items():
+            for metric in SERIES:
                 try:
                     result = fetch_series(session, metric, args.date, api_key=api_key)
                 except EIAError as error:
                     raise EIAError(f"{args.date} {metric}: {error}") from None
                 _check_smoke_result(metric, result, expected)
-                series[metric] = {
-                    "route": route,
-                    "facets": {"respondent": RESPONDENT, facet: code},
-                    "apiVersion": result.api_version,
-                    "response": {"total": len(result.rows), "data": result.rows},
-                }
+                series[metric] = result
         output_status = "Terminal summary only. Add --snapshot PATH to save a sanitized JSON file."
         if args.snapshot:
-            capture = {
-                "utc_date": args.date.isoformat(),
-                "captured_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
-                "frequency": "hourly",
-                "series": series,
-            }
-            contents = json.dumps(capture, indent=2) + "\n"
-            if api_key in contents:
-                raise EIAError("snapshot contains an API key")
-            args.snapshot.parent.mkdir(parents=True, exist_ok=True)
-            with args.snapshot.open("x", encoding="utf-8") as output:
-                output.write(contents)
+            save_snapshot(args.snapshot, args.date, series, api_key=api_key)
             output_status = f"Saved sanitized JSON snapshot to {args.snapshot}"
 
         total_observations = len(expected) * len(series)

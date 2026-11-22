@@ -19,13 +19,7 @@ uv sync --locked
 
 Start Docker with Compose available. Python runs on your machine through `uv`. The default Compose startup runs PostgreSQL 18 with a named volume and a port bound to `127.0.0.1`. Enable the `airflow` profile when you want to run the DAG.
 
-Create `.env` from `.env.example` if you need it, then set `POSTGRES_PASSWORD` to a local password. If you already have a `.env` with your EIA key, add the PostgreSQL settings to that file. `POSTGRES_DB` and `POSTGRES_USER` default to `renewflow`. If port `5432` is busy, set `POSTGRES_PORT=5433` in `.env` so both Compose and Python use the new local port.
-
-```sh
-if [ ! -f .env ]; then
-  (umask 077 && cp .env.example .env)
-fi
-```
+Create `.env` from `.env.example` if you need it, then set `POSTGRES_PASSWORD` to a local password. If you already have a `.env` with your EIA key, add the PostgreSQL settings to that file. `POSTGRES_DB` and `POSTGRES_USER` default to `renewflow`
 
 Start PostgreSQL and apply the schema. `--wait` waits for the database health check. The schema command can be rerun on the same database.
 
@@ -153,6 +147,65 @@ docker compose --profile airflow exec -T airflow-scheduler \
 After verifying the dates and the manifest paths, repeat the command with `--dry-run` removed. Omit `--dag-run-conf` for a live EIA backfill with the API key set. For benchmarks, use an isolated observations database and record the exact manifest, Airflow task slots and active-run limit, and initial database state.
 
 To keep PostgreSQL running for the Python baseline, stop the Airflow services with `docker compose --profile airflow stop airflow-scheduler airflow-dag-processor airflow-api`. To stop the full stack while retaining its volumes, run `docker compose --profile airflow stop`.
+
+## Rehearse the demo and run the paper benchmarks
+
+Capture seven days before the demo. The end date is exclusive. The capture command resumes from existing daily files and records source metadata, checksums, bytes, row counts, and excluded dates in `manifest.json`.
+
+```sh
+mkdir -p .renewflow/replay
+cp -n tests/fixtures/eia-ciso-2025-01-15.json .renewflow/replay/
+uv run --locked --env-file .env python -m experiments.capture \
+  --start-date 2025-01-15 --end-date 2025-01-22 --output-dir .renewflow/replay
+```
+
+Set `RENEWFLOW_REPLAY_DIR=./.renewflow/replay` in `.env` and start Airflow. Trigger the January 15 replay with `"replay_manifest":"manifest.json"` in its configuration. Repeat with `"fail_first":"2025-01-15:wind"`, show the wind retry in the Grid, and use the [row-count query](#run-the-local-postgresql-demo) to verify 24 observations per series. Rehearse the seven-day native backfill by setting its last logical-date bound to `2025-01-21T19:00:00+00:00`.
+
+### Collect matched measurements
+
+Create `.env.benchmark` with local credentials based on `.env.example`. Set the following values to use separate ports, a dedicated database, and the captured input directory.
+
+```dotenv
+POSTGRES_DB=renewflow_benchmark
+POSTGRES_PORT=5433
+AIRFLOW_UI_PORT=8081
+RENEWFLOW_REPLAY_DIR=./.renewflow/replay
+EIA_API_KEY=
+```
+
+```sh
+docker compose --env-file .env.benchmark -p renewflow-benchmark --profile airflow up -d --build --wait
+```
+
+Open `http://localhost:8081` and unpause `renewflow_daily`. Let any initial scheduled run reach a terminal state and keep the benchmark stack clear of other runs during timing. Capture a larger contiguous historical range for longer cohorts and keep those files fixed during trials. The example uses the same seven days as the rehearsal.
+
+```sh
+uv run --locked --env-file .env.benchmark python -m experiments.benchmark \
+  --runner suite --start-date 2025-01-15 --end-date 2025-01-22 \
+  --manifest .renewflow/replay/manifest.json --output-dir .renewflow/results
+```
+
+The suite rotates sequential Python, Airflow with one task slot, and Airflow with four task slots across nested cohorts of 1, 7, 30, 365, and 730 days. It runs five trials per configuration for pilot tiers and three for longer tiers. It records unavailable tiers in `suite-coverage.json` when coverage is too short or the pilot projects a long-tier runtime beyond `--long-tier-budget` seconds. Each trial gets an empty PostgreSQL schema and saves timings, task attempts, counts, and database checksums. Airflow runs a dry run before timing and is polled every half second through native backfill completion. For one trial, use `--runner python` or `--runner airflow`. Use `--slots 1` or `--slots 4` to select Airflow concurrency.
+
+Collect transient recovery evidence separately for both runners.
+
+```sh
+for runner in python airflow; do
+  uv run --locked --env-file .env.benchmark python -m experiments.benchmark \
+    --runner "$runner" --slots 4 --start-date 2025-01-15 --end-date 2025-01-16 \
+    --manifest .renewflow/replay/manifest.json --output-dir .renewflow/results \
+    --fail-first 2025-01-15:wind
+done
+```
+
+Generate tables and the Matplotlib PDF from the recorded trials.
+
+```sh
+uv run --locked --with matplotlib==3.11.2 python -m experiments.report --results-dir .renewflow/results
+```
+
+Use `uv run --locked python -m experiments.report --results-dir .renewflow/results --tables-only` for `timings.csv` and `reliability.csv`. The report checks snapshot and output equality across each cohort. Keep the raw trial JSON, manifest, tables, figure, and coverage notes for the IEEE paper.
+
 
 ## Preview validation offline
 
