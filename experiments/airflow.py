@@ -1,6 +1,7 @@
 """Submit native backfills and read their public Airflow run and task records."""
 
 import os
+from collections import Counter
 from datetime import UTC, date, datetime, time
 from time import perf_counter, sleep
 from urllib.parse import quote, urlsplit
@@ -15,6 +16,28 @@ STAGES = tuple(f"extract_{metric}" for metric in SERIES) + ("load_day",)
 
 def logical_date(day: date) -> str:
     return datetime.combine(day, time(19), tzinfo=UTC).isoformat()
+
+
+def current_attempts(events: list[dict], runs: list[dict]) -> list[dict]:
+    starts = {}
+    for run in runs:
+        queued_at = run["queued_at"] or run["start_date"]
+        if queued_at:
+            starts[run["dag_run_id"]] = datetime.fromisoformat(queued_at)
+
+    counts = Counter()
+    records = []
+    for event in sorted(events, key=lambda event: event.get("airflow_try_number", event["attempt"])):
+        start = starts.get(event["run_id"])
+        try_number = event.get("airflow_try_number", event["attempt"])
+        if start is None or not event["started_at"] or try_number <= 0:
+            continue
+        if datetime.fromisoformat(event["started_at"]) < start:
+            continue
+        stage = (event["run_id"], event["stage"])
+        counts[stage] += 1
+        records.append(event | {"attempt": counts[stage], "airflow_try_number": try_number})
+    return records
 
 
 class Airflow:
@@ -103,11 +126,11 @@ class Airflow:
                 tries = [task]
                 if task["try_number"] > 1:
                     tries = self.call("GET", f"{path}/{stage}/tries")["task_instances"] + tries
-                for number, attempt in sorted({row["try_number"]: row for row in tries}.items()):
-                    if attempt["start_date"] and number > 0:
-                        records.append({
-                            "runner": "airflow", "run_id": run_id, "utc_date": day, "stage": stage,
-                            "attempt": number, "status": attempt["state"], "started_at": attempt["start_date"],
-                            "finished_at": attempt["end_date"], "duration_seconds": attempt["duration"],
-                        })
-        return records
+                for try_number, attempt in {row["try_number"]: row for row in tries}.items():
+                    records.append({
+                        "runner": "airflow", "run_id": run_id, "utc_date": day, "stage": stage,
+                        "attempt": try_number,
+                        "status": attempt["state"], "started_at": attempt["start_date"],
+                        "finished_at": attempt["end_date"], "duration_seconds": attempt["duration"],
+                    })
+        return current_attempts(records, runs)

@@ -34,7 +34,7 @@ Confirm there are no DAG import errors. Open `http://localhost:8080` or the port
 
 ## What to run next
 
-**To collect IEEE paper results, start with the one-day benchmark pilot.** Fetch one historical day from EIA, then run Python and Airflow on that capture. Once both succeed, extend the capture and run the timing and recovery trials. [Run the one-day pilot](docs/BENCHMARKS.md#run-the-one-day-pilot)
+**To collect IEEE paper results, start by capturing 30 days from EIA.** Then run the matched timing suite, the recovery trials, and the report generator. [Benchmark instructions](docs/BENCHMARKS.md#capture-historical-eia-snapshots)
 
 | Goal | Guide |
 | --- | --- |

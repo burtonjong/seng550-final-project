@@ -31,7 +31,10 @@ def _run_context():
         day = observation_date(run.run_type, run.data_interval_end, conf.get("observation_date"))
     except ValueError as error:
         raise AirflowFailException(str(error)) from None
-    return day, run.run_id, context["ti"].try_number, conf
+    ti = context["ti"]
+    # Airflow retains try numbers when a native backfill reprocesses a run.
+    previous_tries = ti.max_tries - (ti.task.retries or 0)
+    return day, run.run_id, ti.try_number - previous_tries, conf
 
 
 @task(retries=EXTRACT_RETRIES, retry_delay=timedelta(seconds=RETRY_DELAY_SECONDS))
