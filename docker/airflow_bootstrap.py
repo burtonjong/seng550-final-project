@@ -44,6 +44,6 @@ def initialize() -> None:
 if __name__ == "__main__":
     if sys.argv[1:] == ["metadata-url"]:
         password = quote(os.environ["AIRFLOW_DB_PASSWORD"], safe="")
-        print(f"postgresql+psycopg2://airflow:{password}@postgres:5432/airflow")
+        sys.stdout.write(f"postgresql+psycopg2://airflow:{password}@postgres:5432/airflow")
     else:
         initialize()

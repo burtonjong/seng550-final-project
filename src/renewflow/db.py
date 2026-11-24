@@ -6,6 +6,8 @@ import re
 import pandas as pd
 import psycopg
 
+BENCHMARK_DATABASE = "renewflow_benchmark"
+
 _KEY = ["respondent", "hour_start_utc", "metric"]
 _UPSERT = """
     INSERT INTO hourly_observations (respondent, hour_start_utc, metric, value_mwh)
@@ -23,8 +25,9 @@ def connect_observations(*, benchmark_schema: str | None = None) -> psycopg.Conn
     database = os.environ.get("POSTGRES_DB") or "renewflow"
     options = {}
     if benchmark_schema is not None:
-        if database != "renewflow_benchmark" or not re.fullmatch(r"trial_[0-9a-f]{32}", benchmark_schema):
-            raise ValueError("benchmark schemas require the dedicated renewflow_benchmark database")
+        if not re.fullmatch(r"trial_[0-9a-f]{32}", benchmark_schema):
+            raise ValueError("benchmark schema must be trial_ followed by 32 hexadecimal characters")
+        database = BENCHMARK_DATABASE
         options["options"] = f"-c search_path={benchmark_schema}"
     return psycopg.connect(
         host=os.environ.get("POSTGRES_HOST") or "127.0.0.1",

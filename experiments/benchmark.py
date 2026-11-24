@@ -7,6 +7,7 @@ import os
 import platform
 import subprocess
 import sys
+from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -20,7 +21,7 @@ from psycopg import sql
 from experiments import utc_days
 from experiments.airflow import Airflow, STAGES
 from experiments.capture import snapshot_metadata
-from renewflow.db import connect_observations
+from renewflow.db import BENCHMARK_DATABASE, connect_observations
 from renewflow.eia import SERIES
 from renewflow.pipeline import replay_fault
 from renewflow.replay import read_manifest, read_snapshot
@@ -29,7 +30,7 @@ from renewflow.transform import normalize_series
 SQL_DIR = Path(__file__).resolve().parents[1] / "sql"
 DUAL_RUNNERS = (("python", 1), ("airflow", 1), ("airflow", 4))
 TIERS = (1, 7, 30, 365, 730)
-COMPOSE = ["docker", "compose", "--env-file", "/dev/null", "-p", "renewflow-benchmark", "--profile", "airflow"]
+COMPOSE = ["docker", "compose", "--profile", "airflow"]
 
 
 def _field(value):
@@ -76,13 +77,18 @@ def prepare_input(manifest: Path, days: list[date]) -> dict:
     }
 
 
-def _prepare_database(schema: str) -> str:
+def _ensure_benchmark_database() -> None:
     with connect_observations() as connection:
-        if connection.info.dbname != "renewflow_benchmark":
-            raise ValueError("run benchmarks against the dedicated renewflow_benchmark database")
+        exists = connection.execute("SELECT 1 FROM pg_database WHERE datname = %s", (BENCHMARK_DATABASE,))
+        if exists.fetchone() is None:
+            with suppress(psycopg.errors.DuplicateDatabase):
+                connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(BENCHMARK_DATABASE)))
+
+
+def _prepare_database(schema: str) -> str:
+    with connect_observations(benchmark_schema=schema) as connection, connection.transaction():
         version = connection.execute("SHOW server_version").fetchone()[0]
         connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-    with connect_observations(benchmark_schema=schema) as connection, connection.transaction():
         for filename in ("schema.sql", "analytics.sql"):
             connection.execute((SQL_DIR / filename).read_text(encoding="utf-8"))
     return version
@@ -172,16 +178,14 @@ def attempt_metrics(events: list[dict], days: list[date]) -> dict:
 
 
 def _ensure_slots(slots: int) -> None:
-    env = os.environ | {"AIRFLOW_PARALLELISM": str(slots), "EIA_API_KEY": ""}
-    subprocess.run([*COMPOSE, "up", "-d", "--wait"], env=env, check=True)
-    for service, key, expected in (
-        ("postgres", "POSTGRES_DB", "renewflow_benchmark"),
-        ("airflow-scheduler", "POSTGRES_DB", "renewflow_benchmark"),
-        ("airflow-scheduler", "AIRFLOW__CORE__PARALLELISM", str(slots)),
-    ):
-        value = subprocess.check_output([*COMPOSE, "exec", "-T", service, "printenv", key], env=env, text=True)
-        if value.strip() != expected:
-            raise RuntimeError(f"{service} has an unexpected {key}")
+    env = os.environ | {"AIRFLOW_PARALLELISM": str(slots)}
+    subprocess.run([*COMPOSE, "up", "-d", "--wait", "airflow-scheduler"], env=env, check=True)
+    value = subprocess.check_output(
+        [*COMPOSE, "exec", "-T", "airflow-scheduler", "printenv", "AIRFLOW__CORE__PARALLELISM"],
+        env=env, text=True,
+    )
+    if value.strip() != str(slots):
+        raise RuntimeError("Airflow scheduler has an unexpected task slot count")
 
 
 def trial(args, airflow: Airflow, dates: list[date], runner: str, slots: int, inputs: dict) -> dict:
@@ -282,8 +286,8 @@ def main() -> None:
     parser.add_argument("--long-tier-budget", type=int, default=7200, help="projected seconds per long tier")
     parser.add_argument("--fail-first", help="run a separate transient fault trial at YYYY-MM-DD:metric")
     args = parser.parse_args()
-    if os.environ.get("POSTGRES_DB") != "renewflow_benchmark":
-        parser.error("set POSTGRES_DB=renewflow_benchmark before benchmarking")
+    if (os.environ.get("POSTGRES_HOST") or "127.0.0.1") not in {"127.0.0.1", "localhost", "::1"}:
+        parser.error("benchmark PostgreSQL host must point to the local Compose database")
     try:
         days = utc_days(args.start_date, args.end_date)
         fault = replay_fault(args.fail_first, replay=True)
@@ -292,6 +296,7 @@ def main() -> None:
         if args.timeout <= 0 or args.long_tier_budget <= 0:
             raise ValueError("time limits must be positive")
         args.output_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_benchmark_database()
         with requests.Session() as session:
             airflow = Airflow(session)
             if args.runner == "suite":
@@ -304,7 +309,7 @@ def main() -> None:
                 if trial(args, airflow, days, args.runner, slots, inputs)["outcome"] != "success":
                     parser.exit(1, "Trial failed verification. See the JSON record.\n")
     except subprocess.CalledProcessError:
-        parser.exit(1, "Could not start or verify the dedicated Docker Compose benchmark stack.\n")
+        parser.exit(1, "Could not start or verify the local Airflow scheduler.\n")
     except psycopg.Error:
         parser.exit(1, "Could not prepare the PostgreSQL benchmark database.\n")
     except (KeyError, OSError, ValueError, RuntimeError) as error:

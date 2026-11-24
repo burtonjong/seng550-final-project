@@ -2,10 +2,11 @@ import hashlib
 import json
 from datetime import date
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from experiments import benchmark
 from experiments.airflow import Airflow, STAGES
 from experiments.benchmark import attempt_metrics, prepare_input
 from experiments.capture import snapshot_metadata
@@ -80,14 +81,38 @@ def test_replay_input_uses_real_fixture_and_rejects_gaps_and_changed_checksums(t
         prepare_input(manifest, [day])
 
 
-def test_benchmark_schema_cannot_target_regular_application_database(monkeypatch):
+def test_benchmark_schema_uses_separate_database_with_same_local_settings(monkeypatch):
     monkeypatch.setenv("POSTGRES_PASSWORD", "test-only")
     monkeypatch.setenv("POSTGRES_DB", "renewflow")
-    with pytest.raises(ValueError, match="dedicated renewflow_benchmark"):
-        connect_observations(benchmark_schema="trial_" + "a" * 32)
-    monkeypatch.setenv("POSTGRES_DB", "renewflow_benchmark")
-    with pytest.raises(ValueError, match="dedicated renewflow_benchmark"):
+    connect = Mock()
+    monkeypatch.setattr("renewflow.db.psycopg.connect", connect)
+
+    connect_observations()
+    normal = connect.call_args.kwargs
+    schema = "trial_" + "a" * 32
+    connect_observations(benchmark_schema=schema)
+
+    assert normal["dbname"] == "renewflow"
+    assert connect.call_args.kwargs == normal | {
+        "dbname": "renewflow_benchmark", "options": f"-c search_path={schema}",
+    }
+    with pytest.raises(ValueError, match="benchmark schema must be trial_"):
         connect_observations(benchmark_schema="public")
+
+
+def test_benchmark_creates_its_database_on_first_use(monkeypatch):
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    connection.execute.return_value.fetchone.side_effect = [None, (1,)]
+    monkeypatch.setattr(benchmark, "connect_observations", Mock(return_value=connection))
+
+    benchmark._ensure_benchmark_database()
+    benchmark._ensure_benchmark_database()
+
+    lookup, create, second_lookup = connection.execute.call_args_list
+    assert lookup.args[1] == ("renewflow_benchmark",)
+    assert create.args[0].as_string() == 'CREATE DATABASE "renewflow_benchmark"'
+    assert second_lookup == lookup
 
 
 def test_recovery_metrics_count_only_retried_stage_and_time_until_daily_load():

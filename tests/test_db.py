@@ -51,7 +51,15 @@ def pg_connection():
     if not dsn:
         pytest.skip("set RENEWFLOW_TEST_DATABASE_URL to run PostgreSQL integration tests")
     isolated_schema = sql.Identifier(f"renewflow_test_{uuid4().hex}")
-    with psycopg.connect(dsn, autocommit=True, connect_timeout=5) as connection:
+    try:
+        connection = psycopg.connect(dsn, autocommit=True, connect_timeout=5)
+    except psycopg.Error:
+        raise pytest.fail.Exception(
+            "Could not connect using RENEWFLOW_TEST_DATABASE_URL. "
+            "Check the published Compose port, credentials, and renewflow_test database.",
+            pytrace=False,
+        ) from None
+    with connection:
         connection.execute(sql.SQL("CREATE SCHEMA {}").format(isolated_schema))
         try:
             connection.execute(sql.SQL("SET search_path TO {}").format(isolated_schema))

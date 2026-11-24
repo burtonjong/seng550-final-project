@@ -2,9 +2,9 @@
 
 ## Objective and scope
 
-RenewFlow is a SENG 550 project that collects hourly solar generation, wind generation, and demand for the California ISO balancing authority (`CISO`), publishes validated data to PostgreSQL, and evaluates Airflow against a sequential Python baseline. The research questions are how the solar and wind contribution varies across hours and seasons, and how workflow orchestration affects backfill throughput, reliability, and recovery as the number of daily work units grows.
+RenewFlow is a SENG 550 project that collects hourly solar generation, wind generation, and demand for the California ISO balancing authority (`CISO`), publishes validated data to PostgreSQL, and evaluates Airflow against a sequential Python baseline. The primary research question is how Airflow orchestration affects execution time, task reliability, failure recovery, and processing scalability as the historical backfill grows. The energy summaries show what the pipeline produces and help verify that both runners publish equivalent results.
 
-The submission target is a repeatable local system using Docker Compose, Airflow 3.x, Python, Requests, Pandas, PostgreSQL, psycopg, and pytest. SQL summaries and local figures provide the analytics evidence. Grafana Cloud and Private Data Source Connect, and a potential always-on EC2 deployment, are optional follow-up work. The local demo includes a scheduled DAG configuration and can run the pipeline on saved historical data without cloud credentials. Live scheduled ingestion runs while the local Airflow services are up and an EIA key is configured.
+The submission target is a repeatable local system using Docker Compose, Airflow 3.x, Python, Requests, Pandas, PostgreSQL, psycopg, and pytest. SQL summaries and local figures provide the analytics evidence. Grafana Cloud and Private Data Source Connect, and a potential always-on EC2 deployment, are optional follow-up work. The local demo fetches a historical day directly from EIA with an API key. Live scheduled ingestion also requires a running local stack and an unpaused DAG. [Local demo](LOCAL_DEMO.md) · [Daily schedule setup](BACKFILLS.md#enable-the-daily-schedule)
 
 ## Inputs and data characteristics
 
@@ -47,6 +47,6 @@ EIA publishes observations using the hour-ending convention and documents report
 
 ## Experimental acceptance
 
-Use the sequential Python runner as the baseline and manually submitted Airflow backfills for the orchestrated comparison. Keep the 19:00 UTC schedule for ongoing ingestion. Both runners perform the same three per-series extraction and validation stages and the same daily PostgreSQL load. For the demo and timed experiments, replay identical real historical EIA captures. The comparison uses nested workloads of 1, 7, 30, 365, and 730 days where coverage and trial time permit.
+Use the sequential Python runner as the baseline and manually submitted Airflow backfills for the orchestrated comparison. Keep the 19:00 UTC schedule for ongoing ingestion. Both runners perform the same three per-series extraction and validation stages and the same daily PostgreSQL load. Capture real historical data directly from EIA before timing, then replay the same saved responses in both runners. The comparison uses nested workloads of 1, 7, 30, 365, and 730 days where coverage and trial time permit.
 
 Evaluate execution time, task reliability, failure recovery, and processing scalability. Require output equivalence and transactional integrity before interpreting speed. Discuss source-quality exclusions, scheduling overhead, and the scope of single-host task parallelism. The [experiment protocol](IMPLEMENTATION_PLAN.md#experiment-protocol) defines the controls, metrics, and evidence needed for the IEEE report.

@@ -4,7 +4,6 @@ x-airflow: &airflow
   image: renewflow-airflow:3.3.2
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__CORE__PARALLELISM: ${AIRFLOW_PARALLELISM:-4}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: renewflow:admin
@@ -69,6 +68,9 @@ services:
 
   airflow-scheduler:
     <<: *airflow
+    environment:
+      <<: *airflow-env
+      AIRFLOW__CORE__PARALLELISM: ${AIRFLOW_PARALLELISM:-4}
     command: scheduler
     depends_on:
       airflow-api:
