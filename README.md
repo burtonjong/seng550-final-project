@@ -34,7 +34,7 @@ Confirm there are no DAG import errors. Open `http://localhost:8080` or the port
 
 ## What to run next
 
-**To collect IEEE paper results, start by capturing 30 days from EIA.** Then run the matched timing suite, the recovery trials, and the report generator. [Benchmark instructions](docs/BENCHMARKS.md#capture-historical-eia-snapshots)
+Use the benchmark guide to collect the IEEE paper results. It covers both the daily backfill comparison and the four-authority comparison that increases the work per task. [Benchmark instructions](docs/BENCHMARKS.md)
 
 | Goal | Guide |
 | --- | --- |

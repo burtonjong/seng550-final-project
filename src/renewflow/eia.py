@@ -1,4 +1,4 @@
-"""Fetch EIA-930 observations for one CISO operating day in UTC."""
+"""Fetch EIA-930 observations for UTC operating days."""
 
 import argparse
 import json
@@ -95,20 +95,36 @@ def fetch_series(
     session: requests.Session, metric: str, utc_date: date, *, api_key: str
 ) -> SeriesExtract:
     """Fetch one metric. Preserve source values for downstream validation."""
+    return fetch_series_range(
+        session, metric, RESPONDENT, utc_date, utc_date + timedelta(days=1), api_key=api_key
+    )
+
+
+def fetch_series_range(
+    session: requests.Session,
+    metric: str,
+    respondent: str,
+    start: date,
+    end: date,
+    *,
+    api_key: str,
+) -> SeriesExtract:
+    """Fetch one authority and metric over a UTC range with an exclusive end."""
     if metric not in SERIES:
         raise ValueError("metric must be solar, wind, or demand")
+    if start >= end:
+        raise ValueError("EIA date range must include at least one UTC day")
     if not api_key.strip():
         raise EIAError("EIA_API_KEY is required")
     route, facet, code = SERIES[metric]
-    endings = _hour_endings(utc_date)
     params = {
         "api_key": api_key,
         "frequency": "hourly",
         "data[0]": "value",
-        "facets[respondent][]": RESPONDENT,
+        "facets[respondent][]": respondent,
         f"facets[{facet}][]": code,
-        "start": endings[0],
-        "end": endings[-1],
+        "start": _hour_endings(start)[0],
+        "end": f"{end.isoformat()}T00",
         "sort[0][column]": "period",
         "sort[0][direction]": "asc",
         "length": 5000,
@@ -146,13 +162,15 @@ def _check_smoke_result(metric: str, result: SeriesExtract, expected: list[str])
         raise EIAError(f"{metric} returned a mismatched series identifier")
 
 
-def save_snapshot(path: Path, day: date, extracts: dict[str, SeriesExtract], *, api_key: str) -> None:
+def save_snapshot(
+    path: Path, day: date, extracts: dict[str, SeriesExtract], *, api_key: str, respondent: str = RESPONDENT
+) -> None:
     series = {}
     for metric, (route, facet, code) in SERIES.items():
         result = extracts[metric]
         series[metric] = {
             "route": route,
-            "facets": {"respondent": RESPONDENT, facet: code},
+            "facets": {"respondent": respondent, facet: code},
             "apiVersion": result.api_version,
             "response": {"total": len(result.rows), "data": result.rows},
         }

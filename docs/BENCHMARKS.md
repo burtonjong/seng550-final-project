@@ -4,6 +4,8 @@ Complete the [local setup](../README.md) and run the steps below from the reposi
 
 Capture historical responses from the EIA API before timing. Both runners process the same saved responses, so source revisions and EIA request latency stay outside the timed comparison. The results measure ETL execution and orchestration on historical EIA data.
 
+**Experiment 1** measures daily Airflow backfills, task concurrency, and controlled recovery. Start with the capture below. **Experiment 2** measures how throughput and elapsed time change as each of four tasks processes more real EIA observations. [Four-authority benchmark](#experiment-2-four-authority-batches)
+
 ## Capture historical EIA snapshots
 
 With `EIA_API_KEY` in `.env`, capture 30 consecutive days from January 15 through February 13, 2025. The end date is exclusive. For a seven-day backfill rehearsal, use `--end-date 2025-01-22`.
@@ -115,3 +117,60 @@ uv run --locked --env-file .env python -m experiments.benchmark \
   --runner airflow --slots 4 --start-date 2025-01-15 --end-date 2025-01-16 \
   --manifest .renewflow/eia-replay/manifest.json --output-dir .renewflow/single-trial
 ```
+
+## Experiment 2 four-authority batches
+
+Use this experiment to test how the Python–Airflow performance gap changes as each task handles more data. In every run, sequential Python processes four authority batches in series. The `renewflow_authority_batches` Airflow DAG runs the same four batches with one or four task slots. Each batch validates and loads all three metrics for one authority using the shared daily PostgreSQL transaction. The number of tasks stays fixed.
+
+| UTC days per authority | Exclusive UTC end | Observations per task | Total observations |
+| --- | --- | --- | --- |
+| 7 | 2025-01-22 | 504 | 2,016 |
+| 30 | 2025-02-14 | 2,160 | 8,640 |
+| 90 | 2025-04-15 | 6,480 | 25,920 |
+
+### 1. Capture and verify EIA coverage
+
+Set `EIA_API_KEY` in `.env` and run from the repository root:
+
+```sh
+uv run --locked --env-file .env python -m experiments.capture_batch \
+  --output-dir .renewflow/batch-replay
+```
+
+The capture starts on January 15, 2025, and fetches from EIA directly. It selects CISO and the first three other qualifying authorities from ERCO, MISO, PJM, NYIS, ISNE, and SWPP in that order. It uses the same four in every cohort. If four qualify for 30 days only, the command selects the 7- and 30-day cohorts. If four including CISO lack 30 complete days, it saves the coverage and exits before benchmarking.
+
+If a connection drops during capture, rerun the command to reuse finished authorities. Once the top-level manifest exists, it represents a frozen selection. Use a new directory if you need another capture. Save the manifest, authority submanifests, and snapshots with the results. They record capture provenance, checksums, and exclusions.
+
+### 2. Mount the capture and start Airflow
+
+Set `RENEWFLOW_REPLAY_DIR=./.renewflow/batch-replay` in the same `.env` and rebuild and start the stack:
+
+```sh
+docker compose --profile airflow up -d --build --wait
+docker compose --profile airflow exec -T airflow-dag-processor airflow dags list-import-errors
+```
+
+In the Airflow UI, unpause `renewflow_authority_batches` and let any active runs finish. Keep the machine awake and the stack idle during timing. Run away from the daily 19:00 UTC schedule.
+
+### 3. Measure sequential Python and Airflow
+
+```sh
+batch_results=$(mktemp -d .renewflow/batch-results-XXXXXX)
+printf 'Batch results directory: %s\n' "$batch_results"
+uv run --locked --env-file .env python -m experiments.batch_benchmark \
+  --manifest .renewflow/batch-replay/manifest.json --output-dir "$batch_results"
+```
+
+On macOS, keep the lid open and prefix the benchmark command with `caffeinate -i`. The suite first runs three 30-day verification trials, one for sequential Python and one for each Airflow slot count. Those records go under `pilot/` and are excluded from the performance report. It then rotates all three configurations for three repetitions each per cohort. Expect 27 measured records if all three cohorts qualify, or 18 if 90 days are unavailable.
+
+Each measured run starts on a fresh PostgreSQL schema. Timing starts at Python process launch or Airflow API submission and ends when the run finishes. Capture, database setup, scheduler reconfiguration, task-instance queries, and checksum verification happen outside the timing interval. Keep any failed trial JSON for diagnosis. If verification fails, resolve the problem and start the batch suite in a fresh directory. The daily backfill suite has its own resume command.
+
+### 4. Generate the batch tables and figure
+
+```sh
+uv run --locked --with matplotlib==3.11.2 python -m experiments.report --results-dir "$batch_results"
+```
+
+The report checks input and output equality again and plots wall time and throughput against observations per authority task on log scales. Use `--tables-only` without the Matplotlib option to generate CSVs. In the batch reliability table, `days_published` counts authority-days, so a complete 30-day trial publishes 120 authority-days. Use the daily experiment for the controlled recovery comparison. In the batch experiment, compare one-slot and four-slot Airflow to measure the effect of concurrency, then compare both to Python at each workload. If Airflow remains slower, report that outcome for the workloads tested.
+
+After the batch experiment, set `RENEWFLOW_REPLAY_DIR` back to the daily capture path if you need to run Experiment 1 again. Apply the slot count and replay path from `.env` with `docker compose --profile airflow up -d --wait`.

@@ -25,9 +25,11 @@ renewflow/
 │   ├── eia.py                 # Live API requests and response decoding
 │   ├── transform.py           # UTC normalization and validation
 │   ├── db.py                  # Transactional loading
-│   └── cli.py                 # Sequential runner and backfill entry point
+│   ├── cli.py                 # Sequential runner and backfill entry point
+│   └── batch.py               # Shared authority-batch runner
 ├── dags/
-│   └── renewflow_daily.py     # Scheduling and task wrappers
+│   ├── renewflow_daily.py     # Scheduling and task wrappers
+│   └── renewflow_authority_batches.py
 ├── sql/                       # Schema and analytical views
 ├── tests/                     # pytest checks and small sanitized fixtures
 └── experiments/               # Capture, replay, and measurement entry points
@@ -82,7 +84,7 @@ The default Compose startup runs PostgreSQL for the sequential baseline. The `ai
 
 The Airflow 3.3.2 DAG uses `CronDataIntervalTimetable` at `0 19 * * *` UTC with `catchup=False`. Scheduled and backfill runs derive the observation date from `data_interval_end` and manual runs take an explicit date. The [local Airflow instructions](BACKFILLS.md) document the logical-date translation, shared replay manifest, logging, and a controlled transient retry. Both runners allow two extract retries at a five-second delay. Airflow records run-level state in its metadata and the Python CLI emits a run summary alongside the shared stage records. [Airflow timetables](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/timetable.html), [Airflow backfills](https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/backfill.html)
 
-Host-side tests cover the UTC date rule and three-day sequential replay with a controlled retry. The Docker image build, Airflow scheduler run, three-day output comparison, and Airflow retry under the scheduler still need verification on a machine with access to the Docker daemon.
+Host-side tests cover the UTC date rule and three-day sequential replay with a controlled retry. Experiment 1 recorded successful native Airflow backfills and a controlled retry under the scheduler. Verify the automatic 19:00 UTC trigger separately when demonstrating scheduled ingestion.
 
 ### Optional cloud phase
 
@@ -100,7 +102,7 @@ Both runners use the same `.env` and local Compose stack as the demo. The benchm
 
 ### Compare the same work
 
-The two runners share the UTC date and replay conventions, validation and loading functions, and per-stage telemetry. The tools for matched measurements are implemented. Actual measurement artifacts, the Airflow scheduler acceptance checks, and the PostgreSQL integration checks need a running local stack.
+The two runners share the UTC date and replay conventions, validation and loading functions, and per-stage telemetry. Use the recorded Experiment 1 trials for the matched daily backfill comparison and a running local stack for further measurements.
 
 - Share one snapshot reader keyed by UTC date. The sequential CLI iterates the manifest in date order, and each Airflow run reads the entry for its observation date. Both use the same per-series validation and transactional loader. For timing, replay reads saved response data locally. Report live EIA timing separately because it includes network and provider variability.
 - Treat solar, wind, and demand extraction with validation, plus the daily PostgreSQL load, as the four comparable stages. Python runs them in order. Airflow may run the three series concurrently and waits for all to validate before loading. Compare committed `(respondent, hour_start_utc, metric, value_mwh)` rows and hourly and daily SQL outputs for identical inputs.
@@ -130,6 +132,16 @@ Use the same historical inputs and inject faults at the same stage and date for 
 - **Results and discussion.** Retain raw run and attempt records, output equality checks, a runtime and throughput plot by workload size, and a table for reliability and recovery. Include an energy analytics figure from the hourly or daily views. Use units, trial counts, captions, and references for every figure or table.
 - **References and appendix.** Cite at least five relevant scholarly or technical references in IEEE style. The project specification and plan link primary EIA, Airflow, and PostgreSQL references for the implemented methods. Retain each group member's contribution statement, AI-use disclosure, and independent verification notes. Base the abstract and conclusions on completed experiments for the report's five-page minimum excluding the appendix.
 
+### Experiment 2 fixed task count and increasing work per task
+
+Experiment 1 adds Airflow DAG runs and task instances as more days enter the backfill. Experiment 2 holds the task graph at four independent authority tasks and increases the number of UTC days processed by each task. It measures how the end-to-end performance gap changes with more observations per task under one- and four-slot Airflow.
+
+1. Capture 90 days per authority starting January 15, 2025, using the EIA hourly endpoints. Select CISO and the first three qualifying authorities in the order documented in the benchmark guide. Admit 7, 30, and 90 days if all four have complete coverage. Fall back to 7 and 30 days if all four qualify at 30 days. Record exclusions and stop before timing if 30 days are unavailable.
+2. Share the authority batch function across sequential Python and the four-task manual Airflow DAG. Each batch processes three EIA series per day and commits through the daily idempotent loader. This preserves one transaction per authority-day.
+3. Verify one 30-day pilot per configuration, with an empty PostgreSQL schema for each trial. Require four successful tasks, 8,640 stored observations, complete UTC days, and matching row, hourly, and daily checksums. Keep pilots in their own subdirectory.
+4. Collect three measured trials per configuration for each eligible cohort. Rotate configuration order, use the same frozen capture and fresh schemas, and time launch or submission through completion. Keep capture, setup, and comparison outside the timed interval.
+5. Report medians and ranges for wall time and throughput from measured results. Plot observations per authority task. Compare the runners at the same workload and discuss whether the measured gap narrows. Use Experiment 1 for the daily backfill and controlled recovery analyses. [Capture, run, and report commands](BENCHMARKS.md#experiment-2-four-authority-batches)
+
 ## Open decisions and assumptions
 
 | Decision | Proposed default or evidence needed |
@@ -142,16 +154,16 @@ Use the same historical inputs and inject faults at the same stage and date for 
 
 ## Remaining checks for the IEEE results
 
-As of November 24, 2026, Phases 0–2 are complete and the core code for Phases 3–6 is in place. The local replay manifest has one verified historical day, January 15, 2025. There are no benchmark trial records or generated results in the workspace. The capture stopped at the next day after an EIA connection failure, and this workspace could not start the local Docker daemon.
+The local Experiment 1 run produced 45 verified timing trials for the 1-, 7-, and 30-day workloads, plus two controlled wind-retry trials. Retain those records with the Experiment 1 capture and report. The Experiment 2 tools are implemented. Live EIA coverage, the Airflow pilots, and measured results still need verification on the local stack.
 
 1. **Run the local PostgreSQL tests (Phases 3–4).** Start the Compose database, configure `RENEWFLOW_TEST_DATABASE_URL`, and run the five PostgreSQL integration cases. Save the outcome for the storage and analytics verification. [Test commands](TESTING.md#postgresql-integration-tests)
 2. **Verify Airflow under the scheduler (Phase 5).** Build and start Airflow. Run a one-day replay, then replay a shared multi-day range in both runners and confirm matching observations and analytics. Verify the scheduled date mapping in Airflow and rehearse a manual seven-day backfill with the recorded data. [Airflow setup and commands](BACKFILLS.md)
-3. **Collect matched performance trials (Phase 6).** Capture and freeze 30 contiguous historical days, using the same start date for the 1-, 7-, and 30-day cohorts. For a complete cohort, run five trials each for sequential Python, Airflow with one slot, and Airflow with four slots. Keep the raw timings and verify the database checksums before interpreting performance. Attempt the 365- and 730-day tiers if verified coverage and the benchmark time budget permit. Record why any tier was skipped. [Benchmark commands](BENCHMARKS.md#collect-matched-measurements)
-4. **Collect reliability and recovery evidence (Phases 5–6).** Run the controlled wind retry once on each runner as a first check. Record attempts, repeated stages, time to publication, and final row equality. The benchmark CLI supports the transient retry; the missing-hour and interrupted-run scenarios in the protocol still require controlled execution and evidence. State which scenarios were run in the report. [Failure scenarios](#measure-outcomes)
+3. **Collect the four-authority performance trials (Phase 6).** Capture the fixed cohorts, verify the pilots, and collect the measured trials in a separate results directory. Retain coverage notes and matching checksums. [Four-authority benchmark](BENCHMARKS.md#experiment-2-four-authority-batches)
+4. **Summarize reliability and recovery evidence (Phases 5–6).** Use the two controlled wind-retry records for attempts, repeated stages, time to publication, and output equality. Any claims about recovery after a missing hour or interrupted run require separate controlled evidence. [Failure scenarios](#measure-outcomes)
 5. **Generate the figures and tables (Phases 4 and 6).** Keep `timings.csv`, `reliability.csv`, `performance.pdf`, raw trial JSON, the snapshot manifest and coverage notes, and an example energy analytics export from PostgreSQL. Use the measured orchestration comparison for the Results section and one energy figure to illustrate the pipeline output. [Analytics export](LOCAL_DEMO.md#export-energy-analytics) · [Report generation](BENCHMARKS.md#generate-tables-and-figures)
 
 ## Submission readiness
 
 Target a complete local rehearsal and code freeze by **November 30, 2026**, as a proposed internal milestone. The demo ZIP is due on **December 1, 2026, at 11:59 PM** via D2L. The in-person demo is **December 2, 2026, 8:00–9:50 AM in ENA 305** and assesses working code and each member's ability to execute and explain their own contribution. Name the ZIP using `Group Number SENG550 ProjectTitle Demo` with the approved title and group number. Include source and supporting files needed for the demo, plus setup and verification instructions.
 
-For the December 4 report and recording, retain the measured outputs, source citations, architectural rationale, and individual contribution notes from the implementation. OpenAI Codex assisted with repository inspection, documentation research, planning, the extractor and validator, the sequential runner and PostgreSQL loader, SQL analytics, Airflow orchestration, replay and telemetry, benchmark and reporting tools, tests, and local setup instructions. Each contributor should record the AI assistance and external sources applicable to their own work and independently verify the material they use or present.
+For the December 4 report and recording, retain the measured outputs, source citations, architectural rationale, and individual contribution notes from the implementation. OpenAI Codex assisted with repository inspection, documentation research, planning, the extractor and validator, the sequential runner and PostgreSQL loader, SQL analytics, Airflow orchestration, replay and telemetry, both experiments' benchmark and reporting tools, tests, and local setup instructions. Each contributor should record the AI assistance and external sources applicable to their own work and independently verify the material they use or present.

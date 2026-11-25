@@ -12,6 +12,9 @@ def summarize(trials: list[dict]) -> tuple[list[dict], list[dict]]:
     timings = defaultdict(list)
     outputs = {}
     reliability = []
+    experiments = {result.get("experiment") for result in trials if "trial_id" in result}
+    if len(experiments) > 1:
+        raise ValueError("report each experiment from its own results directory")
     for result in trials:
         if "trial_id" not in result:
             continue
@@ -48,6 +51,7 @@ def summarize(trials: list[dict]) -> tuple[list[dict], list[dict]]:
         summary.append({
             "start_date": start, "end_date": end, "days": days, "runner": runner, "slots": slots,
             "observations": runs[0]["output"]["observations"], "input_bytes": runs[0]["input"]["input_bytes"],
+            **({"observations_per_task": runs[0]["observations_per_task"]} if experiments == {"authority_batches"} else {}),
             "trials": len(runs), "wall_seconds_median": median(runtime), "wall_seconds_min": min(runtime),
             "wall_seconds_max": max(runtime), "rows_per_second_median": median(throughput),
             "rows_per_second_min": min(throughput), "rows_per_second_max": max(throughput),
@@ -73,21 +77,28 @@ def plot(path: Path, summary: list[dict]) -> None:
     for row in summary:
         series[(row["start_date"], row["runner"], row["slots"])].append(row)
     figure, axes = plt.subplots(1, 2, figsize=(9, 3.4), layout="constrained")
+    workload = "observations_per_task" if "observations_per_task" in summary[0] else "days"
     for (start, runner, slots), rows in series.items():
-        points = sorted(rows, key=lambda row: row["days"])
-        label = "Sequential Python" if runner == "python" else f"Airflow ({slots} slots)"
+        points = sorted(rows, key=lambda row: row[workload])
+        label = "Sequential Python" if runner == "python" else f"Airflow ({slots} slot{'s' if slots != 1 else ''})"
         if len({row["start_date"] for row in summary}) > 1:
             label += f" · {start}"
         for axis, metric in zip(axes, ("wall_seconds", "rows_per_second"), strict=True):
             values = [point[f"{metric}_median"] for point in points]
             errors = [[abs(point[f"{metric}_{bound}"] - value) for point, value in zip(points, values)]
                       for bound in ("min", "max")]
-            axis.errorbar([point["days"] for point in points], values, yerr=errors, marker="o", label=label)
+            axis.errorbar([point[workload] for point in points], values, yerr=errors, marker="o", label=label)
     axes[0].set_ylabel("Wall time (seconds)")
     axes[1].set_ylabel("Throughput (observations/second)")
     for axis in axes:
         axis.set_xscale("log")
-        axis.set_xlabel("Historical workload (UTC days)")
+        if workload == "observations_per_task":
+            sizes = sorted({row[workload] for row in summary})
+            axis.set_xticks(sizes, labels=[f"{size:,}" for size in sizes])
+            axis.set_yscale("log")
+            axis.set_xlabel("Observations per authority task")
+        else:
+            axis.set_xlabel("Historical workload (UTC days)")
         axis.grid(alpha=0.25)
     axes[0].legend(fontsize=8)
     figure.savefig(path)

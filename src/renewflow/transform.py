@@ -1,4 +1,4 @@
-"""Validate and normalize EIA observations for one CISO series and UTC day."""
+"""Validate and normalize EIA observations for one authority, series, and UTC day."""
 
 from dataclasses import dataclass
 from datetime import date
@@ -35,13 +35,13 @@ def _parse_mwh(value: object) -> Decimal | None:
 
 
 def normalize_series(
-    metric: str, utc_date: date, rows: list[dict[str, object]]
+    metric: str, utc_date: date, rows: list[dict[str, object]], *, respondent: str = RESPONDENT
 ) -> NormalizedSeries:
     """Return 24 unique, sorted hourly observations or raise ValidationError."""
     if metric not in SERIES:
         raise ValueError("metric must be solar, wind, or demand")
     _, facet, code = SERIES[metric]
-    context = f"{utc_date} {RESPONDENT} {metric}"
+    context = f"{utc_date} {respondent} {metric}"
 
     invalid_records = sum(not isinstance(row, dict) for row in rows)
     if invalid_records:
@@ -49,7 +49,7 @@ def normalize_series(
     frame = pd.DataFrame(
         rows, columns=["respondent", facet, "value-units", "period", "value"], dtype=object
     )
-    wrong_series = ~(frame["respondent"].eq(RESPONDENT) & frame[facet].eq(code))
+    wrong_series = ~(frame["respondent"].eq(respondent) & frame[facet].eq(code))
     if wrong_series.any():
         raise ValidationError(f"{context}: {wrong_series.sum()} mismatched series identifiers")
     wrong_units = ~frame["value-units"].eq("megawatthours")
@@ -83,7 +83,7 @@ def normalize_series(
 
     observations = pd.DataFrame(
         {
-            "respondent": RESPONDENT,
+            "respondent": respondent,
             "hour_start_utc": hour_starts,
             "metric": metric,
             "value_mwh": values,

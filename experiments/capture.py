@@ -11,17 +11,19 @@ from time import sleep
 import requests
 
 from experiments import utc_days
-from renewflow.eia import SERIES, EIAError, RetryableEIAError, fetch_series, save_snapshot
+from renewflow.eia import RESPONDENT, SERIES, EIAError, RetryableEIAError, fetch_series, save_snapshot
 from renewflow.pipeline import EXTRACT_RETRIES, RETRY_DELAY_SECONDS
 from renewflow.replay import read_snapshot
 from renewflow.transform import ValidationError, normalize_series
 
 
-def snapshot_metadata(path: Path, day: date) -> dict:
+def snapshot_metadata(path: Path, day: date, *, respondent: str = RESPONDENT) -> dict:
     captured_day, rows = read_snapshot(path)
     if captured_day != day:
         raise ValueError(f"{path.name} contains the wrong UTC date")
-    records = sum(len(normalize_series(metric, day, rows[metric]).observations) for metric in SERIES)
+    records = sum(
+        len(normalize_series(metric, day, rows[metric], respondent=respondent).observations) for metric in SERIES
+    )
     raw = path.read_bytes()
     capture = json.loads(raw)
     return {
@@ -37,10 +39,10 @@ def snapshot_metadata(path: Path, day: date) -> dict:
     }
 
 
-def _fetch(session, day, metric, api_key):
+def fetch_with_retries(fetch, *args, **kwargs):
     for attempt in range(EXTRACT_RETRIES + 1):
         try:
-            return fetch_series(session, metric, day, api_key=api_key)
+            return fetch(*args, **kwargs)
         except RetryableEIAError:
             if attempt == EXTRACT_RETRIES:
                 raise
@@ -67,7 +69,10 @@ def main() -> None:
                     if not snapshot.exists():
                         if not api_key:
                             raise EIAError("set EIA_API_KEY to capture missing days")
-                        extracts = {metric: _fetch(session, day, metric, api_key) for metric in SERIES}
+                        extracts = {
+                            metric: fetch_with_retries(fetch_series, session, metric, day, api_key=api_key)
+                            for metric in SERIES
+                        }
                         for metric, result in extracts.items():
                             normalize_series(metric, day, result.rows)
                         save_snapshot(snapshot, day, extracts, api_key=api_key)
