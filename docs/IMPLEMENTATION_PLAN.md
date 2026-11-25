@@ -100,7 +100,7 @@ The benchmark guide documents [historical snapshot capture](BENCHMARKS.md#captur
 
 Both runners use the same `.env` and local Compose stack as the demo. The benchmark harness creates `renewflow_benchmark` in the local PostgreSQL instance and uses a fresh schema per trial. It compares committed rows with the expected normalized replay data and records hashes for the hourly and daily views. The suite and report check matching output hashes across runners. Airflow timing includes submission, queueing, and completion polling. Capturing inputs, preparing the schema, fetching task attempts, and comparing results happen outside the timed interval. The report uses Matplotlib for its PDF and writes CSV tables from the recorded trials.
 
-### Compare the same work
+### Experiment 1 daily backfill and recovery
 
 The two runners share the UTC date and replay conventions, validation and loading functions, and per-stage telemetry. Use the recorded Experiment 1 trials for the matched daily backfill comparison and a running local stack for further measurements.
 
@@ -136,11 +136,11 @@ Use the same historical inputs and inject faults at the same stage and date for 
 
 Experiment 1 adds Airflow DAG runs and task instances as more days enter the backfill. Experiment 2 holds the task graph at four independent authority tasks and increases the number of UTC days processed by each task. It measures how the end-to-end performance gap changes with more observations per task under one- and four-slot Airflow.
 
-1. Capture 90 days per authority starting January 15, 2025, using the EIA hourly endpoints. Select CISO and the first three qualifying authorities in the order documented in the benchmark guide. Admit 7, 30, and 90 days if all four have complete coverage. Fall back to 7 and 30 days if all four qualify at 30 days. Record exclusions and stop before timing if 30 days are unavailable.
-2. Share the authority batch function across sequential Python and the four-task manual Airflow DAG. Each batch processes three EIA series per day and commits through the daily idempotent loader. This preserves one transaction per authority-day.
-3. Verify one 30-day pilot per configuration, with an empty PostgreSQL schema for each trial. Require four successful tasks, 8,640 stored observations, complete UTC days, and matching row, hourly, and daily checksums. Keep pilots in their own subdirectory.
+1. Capture 365 days per authority starting January 15, 2025, using the paginated EIA hourly endpoints. Include solar, wind, authority-wide demand, and the subregional demand series with complete coverage for each authority’s longest viable cohort. Select CISO and the first three qualifying authorities in the documented order. Admit nested 7-, 30-, 90-, and 365-day cohorts through the longest tier covered by all four. Record the zone selections and exclusions in the manifest. Stop before timing if 30 days are unavailable.
+2. Share the authority batch function across sequential Python and the four-task manual Airflow DAG. Store authority-wide and subregional observations in separate tables and commit both together for each authority-day.
+3. Verify one 30-day pilot per configuration, with an empty PostgreSQL schema for each trial. Require four successful tasks, 8,640 authority-wide observations and the expected count of subregional observations, complete UTC days, and matching checksums for both inputs and SQL outputs. Keep pilots in their own subdirectory.
 4. Collect three measured trials per configuration for each eligible cohort. Rotate configuration order, use the same frozen capture and fresh schemas, and time launch or submission through completion. Keep capture, setup, and comparison outside the timed interval.
-5. Report medians and ranges for wall time and throughput from measured results. Plot observations per authority task. Compare the runners at the same workload and discuss whether the measured gap narrows. Use Experiment 1 for the daily backfill and controlled recovery analyses. [Capture, run, and report commands](BENCHMARKS.md#experiment-2-four-authority-batches)
+5. Report median and range for wall time and throughput against total committed rows. Use the authority task table to compare different row counts and durations within each run. Compare the runners at the same workload and discuss whether the measured gap narrows. Use Experiment 1 for the daily backfill and controlled recovery analyses. [Capture, run, and report commands](BENCHMARKS.md#experiment-2-four-authority-batches)
 
 ## Open decisions and assumptions
 
@@ -156,7 +156,7 @@ Experiment 1 adds Airflow DAG runs and task instances as more days enter the bac
 
 The local Experiment 1 run produced 45 verified timing trials for the 1-, 7-, and 30-day workloads, plus two controlled wind-retry trials. Retain those records with the Experiment 1 capture and report. The Experiment 2 tools are implemented. Live EIA coverage, the Airflow pilots, and measured results still need verification on the local stack.
 
-1. **Run the local PostgreSQL tests (Phases 3–4).** Start the Compose database, configure `RENEWFLOW_TEST_DATABASE_URL`, and run the five PostgreSQL integration cases. Save the outcome for the storage and analytics verification. [Test commands](TESTING.md#postgresql-integration-tests)
+1. **Run the local PostgreSQL tests (Phases 3–4).** Start the Compose database, configure `RENEWFLOW_TEST_DATABASE_URL`, and run the PostgreSQL integration suite, including the subregional transaction check. Save the outcome for the storage and analytics verification. [Test commands](TESTING.md#postgresql-integration-tests)
 2. **Verify Airflow under the scheduler (Phase 5).** Build and start Airflow. Run a one-day replay, then replay a shared multi-day range in both runners and confirm matching observations and analytics. Verify the scheduled date mapping in Airflow and rehearse a manual seven-day backfill with the recorded data. [Airflow setup and commands](BACKFILLS.md)
 3. **Collect the four-authority performance trials (Phase 6).** Capture the fixed cohorts, verify the pilots, and collect the measured trials in a separate results directory. Retain coverage notes and matching checksums. [Four-authority benchmark](BENCHMARKS.md#experiment-2-four-authority-batches)
 4. **Summarize reliability and recovery evidence (Phases 5–6).** Use the two controlled wind-retry records for attempts, repeated stages, time to publication, and output equality. Any claims about recovery after a missing hour or interrupted run require separate controlled evidence. [Failure scenarios](#measure-outcomes)

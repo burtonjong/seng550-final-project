@@ -33,7 +33,10 @@ def process_authority(index: int) -> None:
             if days not in replay.cohorts:
                 raise ValueError("requested days are outside the captured cohorts")
             authority, manifest = tuple(replay.manifests.items())[index]
-            counts.update(load_authority_batch(manifest, authority, days, schema=conf["benchmark_schema"]))
+            counts.update(load_authority_batch(
+                manifest, authority, days, schema=conf["benchmark_schema"],
+                subregions=replay.subregions.get(authority, ()),
+            ))
     except (KeyError, OSError, TypeError, ValueError, psycopg.Error) as error:
         raise AirflowFailException(f"Authority batch failed ({type(error).__name__})") from None
 

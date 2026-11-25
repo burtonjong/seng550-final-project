@@ -16,11 +16,13 @@ The submission target is a repeatable local system using Docker Compose, Airflow
 
 Request the `value` column and the `hourly` frequency. Verify the offset-free `period` field's UTC interpretation, hour-ending behavior, response units, and API date bounds on both routes before finalizing the parser. Use stable sorting and honor pagination metadata so truncated results are detectable. Record the route, facets, capture time, and API version in snapshot provenance. [EIA API v2 technical documentation](https://www.eia.gov/opendata/documentation/APIv2.1.0.pdf)
 
+Experiment 2 also captures hourly actual demand from `electricity/rto/region-sub-ba-data/data/`, filtering by `parent` authority and retaining the `subba` code. This data supports load-zone totals and peaks. Authority-wide energy summaries continue to use solar, wind, and authority-wide demand. [EIA-930 demand definitions](https://www.eia.gov/electricity/930-content/about.html)
+
 | Dimension | Implication for RenewFlow |
 | --- | --- |
 | Volume | Three series yield up to 72 observations per complete CISO UTC day, or 26,280 per 365-day year. The experiment scales by replaying more real historical days and reports the actual rows and bytes processed. |
 | Velocity | Observations are hourly and the pipeline runs daily. EIA publishes demand and generation on different timelines, so check all three series for completeness at load time. |
-| Variety | Two semi-structured JSON response shapes use different metric identifiers. Normalize them into structured relational records. The proposed dataset scope covers tabular observations and their API envelopes. |
+| Variety | EIA generation, authority operations, and subregional demand use different identifiers in their JSON responses. Normalize them into relational records that preserve the difference between authority and zone. |
 | Veracity | Late reports, revisions, anomalies, and daylight-saving reporting defects can affect coverage and values. Check the expected UTC slots and quantify defects in the selected history. |
 | Value | Hourly alignment supports investigation of demand peaks and the contribution of solar and wind across the day. Attempt-level records support investigation of delays, failures, and recovery. |
 
@@ -38,6 +40,7 @@ EIA publishes observations using the hour-ending convention and documents report
 - Check response schema, series identifiers, units, hourly timestamp alignment, and bounds. Reject missing, nonnumeric, or nonfinite values and nonpositive CISO demand. Preserve signed net generation and count the hours with negative readings for review. The captured CISO fixture contained 14 negative solar readings in 24 hours. Profile the frequency and size of signed values over the historical benchmark window.
 - Collapse duplicates with the same hour and equivalent numeric value. Count the duplicates and fail validation for conflicting values at the same hour, mismatched records, or missing expected hours. Surface the date, series, and counts so operators can retry or backfill. Publish only complete days and keep any previously published batch if an attempted refresh fails.
 - Store long-form observations keyed by `(respondent, hour_start_utc, metric)` with `timestamptz` and numeric `value_mwh`. Publish all three series in one PostgreSQL transaction using a unique key and `INSERT ... ON CONFLICT DO UPDATE`. An identical replay preserves rows and values. A successful live refresh can replace revised values. Benchmark replay writes to a separate target. [PostgreSQL `INSERT` reference](https://www.postgresql.org/docs/current/sql-insert.html)
+- Store Experiment 2 load-zone demand in a separate table keyed by `(respondent, hour_start_utc, subregion)`. Allow zero demand, reject negative values, and require 24 distinct UTC hours for each selected zone-day. Commit the authority-wide and subregional rows for one authority-day together.
 
 ## Analytics and monitoring
 
@@ -47,8 +50,8 @@ EIA publishes observations using the hour-ending convention and documents report
 
 ## Experimental acceptance
 
-Use the sequential Python runner as the baseline and manually submitted Airflow backfills for the orchestrated comparison. Keep the 19:00 UTC schedule for ongoing ingestion. Both runners perform the same three per-series extraction and validation stages and the same daily PostgreSQL load. Capture real historical data directly from EIA before timing, then replay the same saved responses in both runners. The comparison uses nested workloads of 1, 7, 30, 365, and 730 days where coverage and trial time permit.
+**Experiment 1** compares the overhead and concurrency of daily jobs. The sequential Python baseline processes one CISO day at a time. The native Airflow backfill schedules one run per day with three per-series extraction and validation stages and a daily load. The comparison uses nested 1-, 7-, and 30-day workloads, with 365 and 730 days where coverage and time permit. The controlled fault trials test wind extraction recovery. The 19:00 UTC schedule supports ongoing ingestion.
 
-Run a second comparison with four authorities and four batch tasks at every workload size. Increase the UTC days processed by each task from 7 to 30 to 90 where verified EIA coverage permits. Sequential Python runs one authority batch at a time. A separate manual Airflow DAG runs the same batches with one or four task slots. Verify that each configuration produces the same observations and hourly and daily analytics. Report the second experiment separately from the daily backfill comparison.
+**Experiment 2** compares larger ETL workloads at a fixed task count. Four authority batches process solar, wind, authority-wide demand, and hourly load-zone demand across 7, 30, 90, and 365 days where verified coverage permits. Sequential Python runs one authority at a time. A manual Airflow DAG runs the same four tasks with one or four task slots. Compare wall time, throughput, and per-authority durations. The two experiments use fixed captures from the EIA API so the measured workloads are reproducible.
 
 Evaluate execution time, task reliability, failure recovery, and processing scalability. Require output equivalence and transactional integrity before interpreting speed. Discuss source-quality exclusions, scheduling overhead, and the scope of single-host task parallelism. The [experiment protocol](IMPLEMENTATION_PLAN.md#experiment-protocol) defines the controls, metrics, and evidence needed for the IEEE report.

@@ -1,6 +1,7 @@
 """Measure fixed four-task workloads on the same EIA captures in Python and Airflow."""
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -24,42 +25,83 @@ from experiments.benchmark import (
     _prepare_database,
     _runtime_settings,
     _timing_error,
+    _update_digest,
     _verify_database,
     _write_result,
 )
-from experiments.capture import snapshot_metadata
 from renewflow.batch import (
     BATCH_DAG,
     BATCH_TASKS,
     START_DATE,
     BatchReplay,
     batch_snapshots,
-    normalize_snapshot,
+    normalize_batch_snapshot,
     read_batch_replay,
 )
+from renewflow.db import connect_observations
 
 POLL_INTERVAL_SECONDS = 0.5
 OUTPUT_CHECKSUMS = ("observation_sha256", "hourly_sha256", "daily_sha256")
+SUBREGIONAL_CHECKSUMS = ("subregional_sha256", "daily_subregional_sha256")
 
 
 def prepare_input(replay: BatchReplay, days: int) -> dict:
     captures = {}
-    observations = []
-    for authority, manifest in replay.manifests.items():
+    observation_hash = hashlib.sha256()
+    subregional_hash = hashlib.sha256()
+    observations_by_authority = {}
+    zone_count = 0
+    for authority, manifest in sorted(replay.manifests.items()):
         recorded = json.loads(manifest.read_text(encoding="utf-8"))["captures"]
+        subregions = replay.subregions.get(authority, ())
+        observations_by_authority[authority] = 0
         for day, path in batch_snapshots(manifest, days):
             label = f"{authority}/{day}"
-            metadata = snapshot_metadata(path, day, respondent=authority)
-            if metadata["sha256"] != recorded[day.isoformat()]["sha256"]:
+            metadata = recorded[day.isoformat()]
+            if hashlib.sha256(path.read_bytes()).hexdigest() != metadata["sha256"]:
                 raise ValueError(f"snapshot checksum differs from the manifest for {label}")
             captures[label] = metadata
-            observations.extend(normalize_snapshot(path, day, authority).itertuples(index=False, name=None))
+            observations, subregional = normalize_batch_snapshot(path, day, authority, subregions)
+            ordered = observations.sort_values(["hour_start_utc", "metric"])
+            _update_digest(observation_hash, ordered.itertuples(index=False, name=None))
+            zone_rows = 0
+            if subregional is not None:
+                _update_digest(subregional_hash, subregional.itertuples(index=False, name=None))
+                zone_rows = len(subregional)
+            observations_by_authority[authority] += len(observations) + zone_rows
+            zone_count += zone_rows
     return {
         "captures": captures,
         "source_rows": sum(capture["source_rows"] for capture in captures.values()),
         "input_bytes": sum(capture["bytes"] for capture in captures.values()),
-        "expected_observations": len(observations),
-        "expected_observation_sha256": _digest(sorted(observations, key=lambda row: row[:3])),
+        "expected_observations": sum(observations_by_authority.values()),
+        "observations_by_authority": observations_by_authority,
+        "expected_observation_sha256": observation_hash.hexdigest(),
+        **({
+            "subregions": replay.subregions,
+            "expected_subregional_observations": zone_count,
+            "expected_subregional_sha256": subregional_hash.hexdigest(),
+        } if replay.subregions else {}),
+    }
+
+
+def _verify_subregional_output(schema: str) -> dict:
+    with connect_observations(benchmark_schema=schema) as connection, connection.transaction():
+        count = connection.execute("SELECT count(*) FROM hourly_subregional_demand").fetchone()[0]
+        with connection.cursor(name="subregional_checksum") as cursor:
+            cursor.execute(
+                'SELECT respondent, hour_start_utc, subregion, value_mwh FROM hourly_subregional_demand '
+                'ORDER BY respondent COLLATE "C", hour_start_utc, subregion COLLATE "C"'
+            )
+            checksum = _digest(cursor)
+        daily = connection.execute(
+            'SELECT * FROM daily_subregional_demand ORDER BY respondent COLLATE "C", subregion COLLATE "C", utc_date'
+        ).fetchall()
+    return {
+        "subregional_observations": count,
+        "subregional_sha256": checksum,
+        "daily_subregional_sha256": _digest(daily),
+        "partial_subregion_days": sum(row[3] != 24 for row in daily),
     }
 
 
@@ -125,24 +167,34 @@ def run_trial(
 ) -> dict:
     trial_id = uuid4().hex
     schema = f"trial_{trial_id}"
+    include_subregions = "expected_subregional_sha256" in inputs
+    task_authorities = dict(zip(BATCH_TASKS, authorities, strict=True))
     result = {
-        "experiment": "authority_batches", "trial_id": trial_id, "schema": schema, "runner": runner, "slots": slots,
+        "experiment": "authority_batches_subregions" if include_subregions else "authority_batches",
+        "trial_id": trial_id, "schema": schema, "runner": runner, "slots": slots,
         "started_at": datetime.now(UTC).isoformat(), "start_date": START_DATE.isoformat(),
         "end_date": (START_DATE + timedelta(days=days)).isoformat(), "days": days,
-        "authorities": dict(zip(BATCH_TASKS, authorities, strict=True)), "observations_per_task": days * 72,
+        "authorities": task_authorities,
         "pilot": directory.name == "pilot", "fault": None, "manifest": str(args.manifest), "input": inputs,
         "airflow_version": AIRFLOW_VERSION if runner == "airflow" else None,
         "poll_interval_seconds": POLL_INTERVAL_SECONDS if runner == "airflow" else None,
         "outcome": "failed",
     }
+    if not include_subregions:
+        result["observations_per_task"] = days * 72
     try:
-        result.update(_runtime_settings(_prepare_database(schema)))
+        result.update(_runtime_settings(_prepare_database(schema, include_subregions=include_subregions)))
         if runner == "python":
             elapsed, success, events = _python_trial(args, trial_id, schema, days)
         else:
             elapsed, run, events = _airflow_trial(args, airflow, trial_id, schema, days)
             result["airflow_runs"] = [run]
             success = run["state"] == "success"
+        for event in events:
+            authority = task_authorities.get(event["stage"])
+            if authority is not None:
+                event["authority"] = authority
+                event["expected_observations"] = inputs["observations_by_authority"][authority]
         metrics = _attempt_metrics(events)
         result.update(wall_seconds=elapsed, events=events, metrics=metrics)
         if not success:
@@ -161,9 +213,24 @@ def run_trial(
             or output["observation_sha256"] != inputs["expected_observation_sha256"]
         ):
             raise ValueError("PostgreSQL rows differ from the expected complete observations")
+        checksum_keys = OUTPUT_CHECKSUMS
+        if include_subregions:
+            subregional = _verify_subregional_output(schema)
+            output.update(
+                subregional, authority_observations=output["observations"],
+                observations=output["observations"] + subregional["subregional_observations"],
+            )
+            if (
+                output["observations"] != inputs["expected_observations"]
+                or subregional["subregional_observations"] != inputs["expected_subregional_observations"]
+                or subregional["subregional_sha256"] != inputs["expected_subregional_sha256"]
+                or subregional["partial_subregion_days"]
+            ):
+                raise ValueError("PostgreSQL subregional demand differs from the expected complete observations")
+            checksum_keys += SUBREGIONAL_CHECKSUMS
         if error := _timing_error(result):
             raise ValueError(error)
-        checksums = tuple(output[key] for key in OUTPUT_CHECKSUMS)
+        checksums = tuple(output[key] for key in checksum_keys)
         if references.setdefault(days, checksums) != checksums:
             raise ValueError("PostgreSQL observations or analytics differ across configurations")
         result.update(outcome="success", observations_per_second=output["observations"] / elapsed)

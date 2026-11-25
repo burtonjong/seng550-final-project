@@ -94,6 +94,29 @@ def test_postgres_load_is_idempotent_and_applies_a_revision(pg_connection, obser
 
 
 @pytest.mark.postgres
+def test_subregional_load_is_idempotent_and_atomic_with_authority_rows(pg_connection, observations):
+    pg_connection.execute((SQL_DIR / "subregional_demand.sql").read_text(encoding="utf-8"))
+    pg_connection.execute("SET TIME ZONE 'America/Los_Angeles'")
+    subregional = observations.loc[
+        observations["metric"] == "demand", ["respondent", "hour_start_utc"]
+    ].assign(subregion="PGAE", value_mwh=Decimal("1"))
+    assert load_day(pg_connection, observations, subregional=subregional) == 96
+    assert load_day(pg_connection, observations, subregional=subregional) == 0
+    assert pg_connection.execute(
+        "SELECT respondent, subregion, utc_date, observed_hours, demand_mwh, peak_hourly_demand_mwh "
+        "FROM daily_subregional_demand"
+    ).fetchone() == ("CISO", "PGAE", date(2025, 1, 15), 24, Decimal("24"), Decimal("1"))
+
+    original = _stored_rows(pg_connection)
+    observations.loc[0, "value_mwh"] = Decimal("1000000")
+    subregional.loc[subregional.index[-1], "value_mwh"] = Decimal("-1")
+    with pytest.raises(psycopg.errors.CheckViolation):
+        load_day(pg_connection, observations, subregional=subregional)
+    assert _stored_rows(pg_connection) == original
+    assert pg_connection.execute("SELECT sum(value_mwh) FROM hourly_subregional_demand").fetchone() == (Decimal("24"),)
+
+
+@pytest.mark.postgres
 @pytest.mark.parametrize("already_loaded", [False, True])
 def test_postgres_rolls_back_all_writes_on_error(pg_connection, observations, already_loaded):
     if already_loaded:

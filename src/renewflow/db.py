@@ -16,6 +16,13 @@ _UPSERT = """
     SET value_mwh = EXCLUDED.value_mwh
     WHERE hourly_observations.value_mwh IS DISTINCT FROM EXCLUDED.value_mwh
 """
+_UPSERT_SUBREGIONAL = """
+    INSERT INTO hourly_subregional_demand (respondent, hour_start_utc, subregion, value_mwh)
+    VALUES (%s, %s, %s, %s)
+    ON CONFLICT (respondent, hour_start_utc, subregion) DO UPDATE
+    SET value_mwh = EXCLUDED.value_mwh
+    WHERE hourly_subregional_demand.value_mwh IS DISTINCT FROM EXCLUDED.value_mwh
+"""
 
 
 def connect_observations(*, benchmark_schema: str | None = None) -> psycopg.Connection:
@@ -41,15 +48,23 @@ def connect_observations(*, benchmark_schema: str | None = None) -> psycopg.Conn
     )
 
 
-def load_day(connection: psycopg.Connection, observations: pd.DataFrame) -> int:
-    """Upsert one validated day and return the number of inserted or updated rows."""
+def _day_rows(observations: pd.DataFrame, keys: list[str]):
     # Visit keys in the same order when more than one run writes the same day.
-    batch = observations[_KEY + ["value_mwh"]].sort_values(_KEY)
-    rows = (
-        (respondent, hour_start.to_pydatetime(), metric, value_mwh)
-        for respondent, hour_start, metric, value_mwh in batch.itertuples(index=False, name=None)
+    batch = observations[keys + ["value_mwh"]].sort_values(keys)
+    return (
+        (respondent, hour_start.to_pydatetime(), series, value_mwh)
+        for respondent, hour_start, series, value_mwh in batch.itertuples(index=False, name=None)
     )
+
+
+def load_day(
+    connection: psycopg.Connection, observations: pd.DataFrame, *, subregional: pd.DataFrame | None = None
+) -> int:
+    """Upsert one validated day and return the number of inserted or updated rows."""
     with connection.transaction(), connection.cursor() as cursor:
-        cursor.executemany(_UPSERT, rows)
+        cursor.executemany(_UPSERT, _day_rows(observations, _KEY))
         changed_rows = cursor.rowcount
+        if subregional is not None:
+            cursor.executemany(_UPSERT_SUBREGIONAL, _day_rows(subregional, ["respondent", "hour_start_utc", "subregion"]))
+            changed_rows += cursor.rowcount
     return changed_rows

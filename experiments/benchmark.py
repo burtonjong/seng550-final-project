@@ -49,9 +49,13 @@ def _field(value):
 
 def _digest(rows) -> str:
     checksum = hashlib.sha256()
+    _update_digest(checksum, rows)
+    return checksum.hexdigest()
+
+
+def _update_digest(checksum, rows) -> None:
     for row in rows:
         checksum.update((json.dumps([_field(value) for value in row], default=str) + "\n").encode())
-    return checksum.hexdigest()
 
 
 def prepare_input(manifest: Path, days: list[date]) -> dict:
@@ -88,12 +92,14 @@ def _ensure_benchmark_database() -> None:
                 connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(BENCHMARK_DATABASE)))
 
 
-def _prepare_database(schema: str) -> str:
+def _prepare_database(schema: str, *, include_subregions: bool = False) -> str:
     with connect_observations(benchmark_schema=schema) as connection, connection.transaction():
         version = connection.execute("SHOW server_version").fetchone()[0]
         connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         for filename in ("schema.sql", "analytics.sql"):
             connection.execute((SQL_DIR / filename).read_text(encoding="utf-8"))
+        if include_subregions:
+            connection.execute((SQL_DIR / "subregional_demand.sql").read_text(encoding="utf-8"))
     return version
 
 

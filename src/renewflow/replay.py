@@ -7,17 +7,22 @@ from pathlib import Path
 from renewflow.eia import SERIES
 
 
-def read_snapshot(path: Path) -> tuple[date, dict[str, list[dict[str, object]]]]:
+def read_snapshot(
+    path: Path, *, include_subregions: bool = False
+) -> tuple[date, dict[str, list[dict[str, object]]]]:
     try:
         capture = json.loads(path.read_text(encoding="utf-8"))
         day = date.fromisoformat(capture["utc_date"])
         if capture["frequency"] != "hourly" or capture["series"].keys() != SERIES.keys():
             raise ValueError
         rows = {metric: capture["series"][metric]["response"]["data"] for metric in SERIES}
+        if include_subregions:
+            rows["subregional_demand"] = capture["subregional_demand"]["response"]["data"]
         if any(not isinstance(records, list) for records in rows.values()):
             raise ValueError
     except (AttributeError, KeyError, TypeError, ValueError):
-        raise ValueError(f"{path.name} must contain an hourly EIA snapshot with all three series") from None
+        required = "all three series and subregional demand" if include_subregions else "all three series"
+        raise ValueError(f"{path.name} must contain an hourly EIA snapshot with {required}") from None
     return day, rows
 
 

@@ -11,6 +11,7 @@ import requests
 
 API_URL = "https://api.eia.gov/v2"
 RESPONDENT = "CISO"
+SUBREGIONAL_DEMAND_ROUTE = "electricity/rto/region-sub-ba-data/data/"
 SERIES = {
     "solar": ("electricity/rto/fuel-type-data/data/", "fueltype", "SUN"),
     "wind": ("electricity/rto/fuel-type-data/data/", "fueltype", "WND"),
@@ -112,23 +113,43 @@ def fetch_series_range(
     """Fetch one authority and metric over a UTC range with an exclusive end."""
     if metric not in SERIES:
         raise ValueError("metric must be solar, wind, or demand")
+    route, facet, code = SERIES[metric]
+    return _fetch_hourly_range(
+        session, route, {"respondent": respondent, facet: code}, start, end, api_key=api_key
+    )
+
+
+def fetch_subregional_demand(
+    session: requests.Session, respondent: str, start: date, end: date, *, api_key: str
+) -> SeriesExtract:
+    """Fetch hourly actual demand for all published subregions of one authority."""
+    return _fetch_hourly_range(
+        session, SUBREGIONAL_DEMAND_ROUTE, {"parent": respondent}, start, end,
+        api_key=api_key, identifier="subba",
+    )
+
+
+def _fetch_hourly_range(
+    session: requests.Session, route: str, facets: dict[str, str], start: date, end: date,
+    *, api_key: str, identifier: str | None = None,
+) -> SeriesExtract:
     if start >= end:
         raise ValueError("EIA date range must include at least one UTC day")
     if not api_key.strip():
         raise EIAError("EIA_API_KEY is required")
-    route, facet, code = SERIES[metric]
     params = {
         "api_key": api_key,
         "frequency": "hourly",
         "data[0]": "value",
-        "facets[respondent][]": respondent,
-        f"facets[{facet}][]": code,
+        **{f"facets[{facet}][]": value for facet, value in facets.items()},
         "start": _hour_endings(start)[0],
         "end": f"{end.isoformat()}T00",
         "sort[0][column]": "period",
         "sort[0][direction]": "asc",
         "length": 5000,
     }
+    if identifier:
+        params.update({"sort[1][column]": identifier, "sort[1][direction]": "asc"})
     rows, total, api_version = _request_page(session, route, {**params, "offset": 0})
     if len(rows) > total or (not rows and total):
         raise EIAError("EIA returned an incomplete or inconsistent page sequence")
@@ -138,7 +159,9 @@ def fetch_series_range(
             raise EIAError("EIA returned an incomplete or inconsistent page sequence")
         rows.extend(page)
 
-    fields = ("period", "respondent", facet, "value", "value-units")
+    fields = ("period", *facets, "value", "value-units")
+    if identifier:
+        fields += (identifier,)
     records = [{field: row[field] for field in fields if field in row} for row in rows]
     return SeriesExtract(records, api_version)
 
@@ -163,7 +186,8 @@ def _check_smoke_result(metric: str, result: SeriesExtract, expected: list[str])
 
 
 def save_snapshot(
-    path: Path, day: date, extracts: dict[str, SeriesExtract], *, api_key: str, respondent: str = RESPONDENT
+    path: Path, day: date, extracts: dict[str, SeriesExtract], *, api_key: str,
+    respondent: str = RESPONDENT, subregional_demand: SeriesExtract | None = None,
 ) -> None:
     series = {}
     for metric, (route, facet, code) in SERIES.items():
@@ -180,6 +204,13 @@ def save_snapshot(
         "frequency": "hourly",
         "series": series,
     }
+    if subregional_demand is not None:
+        capture["subregional_demand"] = {
+            "route": SUBREGIONAL_DEMAND_ROUTE,
+            "facets": {"parent": respondent},
+            "apiVersion": subregional_demand.api_version,
+            "response": {"total": len(subregional_demand.rows), "data": subregional_demand.rows},
+        }
     contents = json.dumps(capture, indent=2) + "\n"
     if api_key and api_key in contents:
         raise EIAError("snapshot contains an API key")

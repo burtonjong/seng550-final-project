@@ -24,17 +24,23 @@ def snapshot_metadata(path: Path, day: date, *, respondent: str = RESPONDENT) ->
     records = sum(
         len(normalize_series(metric, day, rows[metric], respondent=respondent).observations) for metric in SERIES
     )
-    raw = path.read_bytes()
+    return capture_metadata(path.read_bytes(), records)
+
+
+def capture_metadata(raw: bytes, observations: int) -> dict:
     capture = json.loads(raw)
+    sources = dict(capture["series"])
+    if "subregional_demand" in capture:
+        sources["subregional_demand"] = capture["subregional_demand"]
     return {
         "sha256": hashlib.sha256(raw).hexdigest(),
         "bytes": len(raw),
-        "source_rows": sum(len(series) for series in rows.values()),
-        "observations": records,
+        "source_rows": sum(len(payload["response"]["data"]) for payload in sources.values()),
+        "observations": observations,
         "captured_at_utc": capture.get("captured_at_utc"),
         "sources": {
             metric: {field: payload.get(field) for field in ("route", "facets", "apiVersion")}
-            for metric, payload in capture["series"].items()
+            for metric, payload in sources.items()
         },
     }
 

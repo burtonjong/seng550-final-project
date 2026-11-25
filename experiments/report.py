@@ -15,6 +15,7 @@ def summarize(trials: list[dict]) -> tuple[list[dict], list[dict]]:
     experiments = {result.get("experiment") for result in trials if "trial_id" in result}
     if len(experiments) > 1:
         raise ValueError("report each experiment from its own results directory")
+    subregional = experiments == {"authority_batches_subregions"}
     for result in trials:
         if "trial_id" not in result:
             continue
@@ -38,6 +39,7 @@ def summarize(trials: list[dict]) -> tuple[list[dict], list[dict]]:
         evidence = (
             tuple(sorted((day, capture["sha256"]) for day, capture in captures.items())),
             *(result["output"][key] for key in ("observation_sha256", "hourly_sha256", "daily_sha256")),
+            *((result["output"]["subregional_sha256"], result["output"]["daily_subregional_sha256"]) if subregional else ()),
         )
         if outputs.setdefault(cohort, evidence) != evidence:
             raise ValueError(f"snapshots or SQL outputs differ for cohort starting {cohort[0]}")
@@ -52,6 +54,7 @@ def summarize(trials: list[dict]) -> tuple[list[dict], list[dict]]:
             "start_date": start, "end_date": end, "days": days, "runner": runner, "slots": slots,
             "observations": runs[0]["output"]["observations"], "input_bytes": runs[0]["input"]["input_bytes"],
             **({"observations_per_task": runs[0]["observations_per_task"]} if experiments == {"authority_batches"} else {}),
+            **({"subregional_observations": runs[0]["output"]["subregional_observations"]} if subregional else {}),
             "trials": len(runs), "wall_seconds_median": median(runtime), "wall_seconds_min": min(runtime),
             "wall_seconds_max": max(runtime), "rows_per_second_median": median(throughput),
             "rows_per_second_min": min(throughput), "rows_per_second_max": max(throughput),
@@ -77,7 +80,11 @@ def plot(path: Path, summary: list[dict]) -> None:
     for row in summary:
         series[(row["start_date"], row["runner"], row["slots"])].append(row)
     figure, axes = plt.subplots(1, 2, figsize=(9, 3.4), layout="constrained")
-    workload = "observations_per_task" if "observations_per_task" in summary[0] else "days"
+    workload = "days"
+    if "subregional_observations" in summary[0]:
+        workload = "observations"
+    elif "observations_per_task" in summary[0]:
+        workload = "observations_per_task"
     for (start, runner, slots), rows in series.items():
         points = sorted(rows, key=lambda row: row[workload])
         label = "Sequential Python" if runner == "python" else f"Airflow ({slots} slot{'s' if slots != 1 else ''})"
@@ -92,11 +99,11 @@ def plot(path: Path, summary: list[dict]) -> None:
     axes[1].set_ylabel("Throughput (observations/second)")
     for axis in axes:
         axis.set_xscale("log")
-        if workload == "observations_per_task":
+        if workload != "days":
             sizes = sorted({row[workload] for row in summary})
             axis.set_xticks(sizes, labels=[f"{size:,}" for size in sizes])
             axis.set_yscale("log")
-            axis.set_xlabel("Observations per authority task")
+            axis.set_xlabel("Observations per trial" if workload == "observations" else "Observations per authority task")
         else:
             axis.set_xlabel("Historical workload (UTC days)")
         axis.grid(alpha=0.25)
@@ -116,6 +123,16 @@ def main() -> None:
         if not reliability:
             raise ValueError("no benchmark trials found")
         write_csv(args.results_dir / "reliability.csv", reliability)
+        tasks = [
+            {
+                "trial_id": trial["trial_id"], "runner": trial["runner"], "slots": trial["slots"],
+                "days": trial["days"], "authority": event["authority"], "observations": event["expected_observations"],
+                "status": event["status"], "duration_seconds": event.get("duration_seconds"),
+            }
+            for trial in trials if trial.get("experiment") == "authority_batches_subregions"
+            for event in trial.get("events", []) if "authority" in event
+        ]
+        write_csv(args.results_dir / "task_timings.csv", tasks)
         if summary:
             write_csv(args.results_dir / "timings.csv", summary)
             if not args.tables_only:
