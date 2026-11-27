@@ -1,6 +1,5 @@
-import csv
 import json
-from datetime import date, datetime, time, timedelta
+from datetime import date, timedelta
 
 import pytest
 
@@ -13,25 +12,7 @@ FIRST = date(2025, 1, 15)
 LATER = date(2025, 1, 17)
 
 
-def write_days(directory, label, days, *, value="2", omit_wind=False):
-    with (directory / f"{label}-balance.csv").open("w", newline="") as balance, (
-        directory / f"{label}-zone.csv"
-    ).open("w", newline="") as subregion:
-        ba = csv.writer(balance)
-        zones = csv.writer(subregion)
-        ba.writerow([csv_source.AUTHORITY, csv_source.HOUR_END, *csv_source.COLUMNS.values(), *csv_source.BATTERY])
-        zones.writerow([csv_source.AUTHORITY, csv_source.HOUR_END, csv_source.ZONE, csv_source.DEMAND])
-        for day in days:
-            for hour in range(1, 25):
-                end = datetime.combine(day, time.min) + timedelta(hours=hour)
-                period = end.strftime("%m/%d/%Y %I:%M:%S %p")
-                for authority, codes in csv_source.ZONES.items():
-                    wind = "" if omit_wind and hour == 24 and authority == "CISO" else value
-                    ba.writerow([authority, period, "-1", wind, "4", "", "0"])
-                    zones.writerows((authority, period, zone, "0") for zone in codes)
-
-
-def test_benchmark_extracts_csvs_without_prebuilt_snapshots(tmp_path, monkeypatch):
+def test_benchmark_extracts_csvs_without_prebuilt_snapshots(tmp_path, monkeypatch, write_days):
     from renewflow import batch
 
     directory = tmp_path / "data"
@@ -67,7 +48,7 @@ def test_benchmark_extracts_csvs_without_prebuilt_snapshots(tmp_path, monkeypatc
 
 
 
-def test_benchmark_manifest_reuses_only_matching_inputs(tmp_path, monkeypatch):
+def test_benchmark_manifest_reuses_only_matching_inputs(tmp_path, monkeypatch, write_days):
     inputs = tmp_path / "data"
     inputs.mkdir()
     write_days(inputs, "source", [FIRST, LATER])
@@ -90,7 +71,7 @@ def test_benchmark_manifest_reuses_only_matching_inputs(tmp_path, monkeypatch):
     assert manifest.read_bytes() == original
 
 
-def test_extra_cohort_is_frozen_with_the_full_workload(tmp_path):
+def test_extra_cohort_is_frozen_with_the_full_workload(tmp_path, write_days):
     inputs = tmp_path / "data"
     inputs.mkdir()
     write_days(inputs, "source", [FIRST, FIRST + timedelta(days=1), LATER])
@@ -106,7 +87,7 @@ def test_extra_cohort_is_frozen_with_the_full_workload(tmp_path):
         source.import_csv(inputs, tmp_path / "too-long", FIRST, manifest_only=True, extra_cohorts=(4,))
 
 
-def test_csv_extension_preserves_sources_and_uses_explicit_complete_dates(tmp_path):
+def test_csv_extension_preserves_sources_and_uses_explicit_complete_dates(tmp_path, write_days):
     directory = tmp_path / "data"
     directory.mkdir()
     write_days(directory, "initial", [FIRST])
@@ -124,9 +105,6 @@ def test_csv_extension_preserves_sources_and_uses_explicit_complete_dates(tmp_pa
     assert len(result["source_files"]) == 6
     replay = read_batch_replay(extended / "manifest.json")
     assert replay.selected_dates(2) == (FIRST, LATER)
-    inputs = batch_benchmark.prepare_input(replay, 2)
-    assert inputs["expected_observations"] == 2304
-    assert inputs["expected_subregional_observations"] == 1728
     path = read_manifest(replay.manifests["MISO"])[LATER]
     observations, subregional = normalize_batch_snapshot(path, LATER, "MISO", replay.subregions["MISO"])
     assert "0001" in set(subregional["subregion"])
@@ -140,7 +118,7 @@ def test_csv_extension_preserves_sources_and_uses_explicit_complete_dates(tmp_pa
     assert (original / "manifest.json").read_bytes() == frozen
 
 
-def test_application_load_resumes_with_the_extended_manifest(tmp_path, monkeypatch, capsys):
+def test_application_load_resumes_with_the_extended_manifest(tmp_path, monkeypatch, capsys, write_days):
     from renewflow import cli
 
     inputs = tmp_path / "data"

@@ -30,23 +30,6 @@ def test_subregional_validation_separates_codes_and_rejects_conflicting_duplicat
         normalize_subregional_demand(day, rows, respondent="ERCO", subregions=zones)
 
 
-@pytest.mark.parametrize("cohorts", [(7, 30), (7, 30, 90), (7, 30, 90, 365), (7, 30, 365)])
-def test_batch_manifest_accepts_only_contiguous_cohorts(tmp_path, cohorts):
-    manifest = tmp_path / "manifest.json"
-    authorities = batch.AUTHORITIES[:4]
-    manifest.write_text(json.dumps({
-        "start_date": "2025-01-15",
-        "authorities": authorities,
-        "cohorts": cohorts,
-        "authority_manifests": {authority: f"{authority}/manifest.json" for authority in authorities},
-    }))
-    if cohorts == (7, 30, 365):
-        with pytest.raises(ValueError, match="invalid authority selection or UTC cohorts"):
-            batch.read_batch_replay(manifest)
-    else:
-        assert batch.read_batch_replay(manifest).cohorts == cohorts
-
-
 def test_suite_separates_pilots_and_rotates_three_repetitions(monkeypatch, tmp_path):
     replay = batch.BatchReplay({authority: Path(authority) for authority in batch.AUTHORITIES[:4]}, (*batch.COHORTS, 334))
     args = SimpleNamespace(output_dir=tmp_path, mode="all")
@@ -104,7 +87,10 @@ def test_trial_rejects_unequal_analytics_and_report_counts_all_rows(monkeypatch,
     args = SimpleNamespace(manifest=tmp_path / "manifest.json")
     authorities = batch.AUTHORITIES[:4]
     inputs = {
-        "captures": {}, "expected_observation_sha256": "obs", "input_bytes": 100,
+        "utc_dates": [(batch.START_DATE + timedelta(days=i)).isoformat() for i in range(7)],
+        "source_files": [], "distinct_csv_bytes": 25, "input_bytes": 100,
+        "subregions": {authority: ("ZONE",) for authority in authorities},
+        "expected_observation_sha256": "obs",
         "observations_by_authority": dict.fromkeys(authorities, 672),
         "expected_observations": 2688, "expected_subregional_observations": 672, "expected_subregional_sha256": "zone",
     }
@@ -126,6 +112,9 @@ def test_trial_rejects_unequal_analytics_and_report_counts_all_rows(monkeypatch,
         }
         for index, stage in enumerate(batch.BATCH_TASKS)
     ]
+    for event in events:
+        if event["stage"].startswith("extract"):
+            event["csv_bytes_scanned"] = 25
     monkeypatch.setattr(batch, "STAGING_ROOT", tmp_path / "staging")
     monkeypatch.setattr(batch_benchmark, "read_attempts", lambda _: events)
     monkeypatch.setattr(batch_benchmark, "_python_trial", Mock(return_value=(1.0, True)))

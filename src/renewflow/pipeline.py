@@ -27,11 +27,11 @@ def observation_date(value: str | None) -> date:
     return day
 
 
-def replay_fault(value: str | None, *, replay: bool) -> tuple[date, str] | None:
+def replay_fault(value: str | None) -> tuple[date, str] | None:
     if value is None:
         return None
-    if not replay or not isinstance(value, str):
-        raise ValueError("fail_first is available only in replay mode")
+    if not isinstance(value, str):
+        raise ValueError("fail_first must be a replay fault string")
     label, _, metric = value.partition(":")
     try:
         day = date.fromisoformat(label)

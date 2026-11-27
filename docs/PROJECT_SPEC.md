@@ -17,7 +17,7 @@ Over a one-hour interval, hourly average MW is numerically equal to MWh. Preserv
 
 | Dimension | Implication for RenewFlow |
 | --- | --- |
-| Volume | The four source files hold more than 1.25 million rows. The largest verified cohort processes 384,768 observations after filtering to selected authorities, zones, and complete UTC days. |
+| Volume | The eight 2024–2025 source files hold more than 2.5 million rows. The largest verified cohort processes 806,400 observations after filtering to selected authorities, zones, and complete UTC days. |
 | Velocity | Observations are hourly. Historical files support repeatable manual replay and extensions as new file periods arrive. |
 | Variety | Balance and Subregion have different schemas and identifiers. UTC normalization aligns their time axis while retaining authority and zone keys. |
 | Veracity | Missing observations, revisions, conflicting duplicates, and local reporting anomalies affect coverage. The manifest records the source hashes and the excluded dates with reasons. |
@@ -38,7 +38,7 @@ Over a one-hour interval, hourly average MW is numerically equal to MWh. Preserv
 
 ## Experimental acceptance
 
-One experiment compares sequential Python with Airflow at one and four task slots. Four authority chains each use a separate extract, transform, and load task across the 1-, 7-, 30-, and 334-day workloads selected from the 2025 CSVs. Both runners scan the same original EIA files once per authority inside the timed Extract stages. They use the same intermediate files and database operations. Record task overlap, end-to-end wall time, and verified rows per second. Test whether four-slot Airflow overtakes Python as each task gets more rows.
+One experiment compares sequential Python with Airflow at one and four task slots. Four authority chains each use a separate extract, transform, and load task across the 1-, 7-, 30-, 334-, and 700-day workloads selected from the 2024–2025 CSVs. Both runners scan the same original EIA files once per authority inside the timed Extract stages. They use the same intermediate files and database operations. Record task overlap, end-to-end wall time, and verified rows per second. Test whether four-slot Airflow overtakes Python as each task gets more rows.
 
 In separate recovery trials, fail CISO’s load immediately after three UTC days commit. Both runners automatically retry once using staged transformed data and idempotent writes. Measure recovery time, repeated work, first-attempt success, and operator intervention. Verify all SQL outputs against clean runs. [Benchmark guide](BENCHMARKS.md)
 

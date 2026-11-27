@@ -12,14 +12,14 @@ cat sql/schema.sql sql/subregional_demand.sql | docker compose exec -T postgres 
 
 ## Replay a day
 
-Create a local CSV replay using the [import instructions](BACKFILLS.md). Both examples below publish January 15, 2025, to the application database.
+Create a local CSV replay using the [import instructions](BACKFILLS.md). Both examples below publish January 15, 2024, to the application database.
 
 ### Sequential Python
 
 ```sh
 uv run --locked --env-file .env python -m renewflow.cli \
-  --replay-manifest .renewflow/csv-replay-2025/CISO/manifest.json \
-  --start-date 2025-01-15 --end-date 2025-01-16
+  --replay-manifest .renewflow/csv-replay/CISO/manifest.json \
+  --start-date 2024-01-15 --end-date 2024-01-16
 ```
 
 ### Airflow
@@ -36,8 +36,8 @@ docker compose exec -T postgres sh -c \
 SELECT metric, count(*) AS observations
 FROM hourly_observations
 WHERE respondent = 'CISO'
-  AND hour_start_utc >= TIMESTAMPTZ '2025-01-15 00:00:00+00'
-  AND hour_start_utc < TIMESTAMPTZ '2025-01-16 00:00:00+00'
+  AND hour_start_utc >= TIMESTAMPTZ '2024-01-15 00:00:00+00'
+  AND hour_start_utc < TIMESTAMPTZ '2024-01-16 00:00:00+00'
 GROUP BY metric
 ORDER BY metric;
 SQL
@@ -81,4 +81,4 @@ If January 15 is the only day loaded, expect 24 hourly rows and one daily row. T
 
 The seasonal CSV uses complete UTC days and reports how many days contribute to each hourly mean, plus their first and last dates. January 15 contributes one winter day. Load dates across multiple seasons before using the export for a seasonal comparison in the report.
 
-For paper measurements, use the same imported CSV replay in both runners. [Benchmark guide](BENCHMARKS.md)
+For paper measurements, use the direct CSV benchmark in both runners. [Benchmark guide](BENCHMARKS.md)

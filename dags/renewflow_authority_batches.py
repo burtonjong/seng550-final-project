@@ -21,6 +21,8 @@ def _run_stage(index: int, stage: str, source: str | None):
     conf = context["dag_run"].conf or {}
     try:
         replay = read_batch_replay(replay_path(Path("/opt/airflow/replay"), conf["replay_manifest"]))
+        if not replay.csv_sources:
+            raise ValueError("the authority benchmark requires a direct CSV manifest")
         batch = authority_batch(
             replay, index, conf["days"], conf["benchmark_schema"], conf.get("inject_load_failure", False),
         )

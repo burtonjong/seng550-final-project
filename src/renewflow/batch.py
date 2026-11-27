@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -17,17 +16,16 @@ import psycopg
 
 from renewflow.db import connect_observations, load_day
 from renewflow.eia import SERIES
-from renewflow.eia930_csv import collect_rows, csv_paths, day_payload
+from renewflow.eia930_csv import ZONES, collect_rows, csv_paths, day_payload
 from renewflow.pipeline import record_attempt
-from renewflow.replay import read_manifest, read_snapshot, replay_path, snapshot_rows
+from renewflow.replay import read_snapshot, replay_path
 from renewflow.transform import normalize_series, normalize_subregional_demand
 
-AUTHORITIES = ("CISO", "ERCO", "MISO", "PJM", "NYIS", "ISNE", "SWPP")
+AUTHORITIES = tuple(ZONES)
 COHORTS = (1, 7, 30)
-LEGACY_COHORTS = (7, 30, 90, 365)
-START_DATE = date(2025, 1, 15)
+START_DATE = date(2024, 1, 1)
 BATCH_DAG = "renewflow_authority_batches"
-AUTHORITY_COUNT = 4
+AUTHORITY_COUNT = len(AUTHORITIES)
 STAGES = ("extract", "transform", "load")
 BATCH_TASKS = tuple(f"{stage}_authority_{index}" for index in range(AUTHORITY_COUNT) for stage in STAGES)
 STAGING_ROOT = Path(".renewflow/staging")
@@ -50,11 +48,9 @@ class BatchReplay:
         return tuple(self.subregions if self.csv_sources else self.manifests)
 
     def selected_dates(self, days: int) -> tuple[date, ...]:
-        if self.dates:
-            if not 0 < days <= len(self.dates):
-                raise ValueError("requested days exceed replay coverage")
-            return self.dates[:days]
-        return tuple(START_DATE + timedelta(days=offset) for offset in range(days))
+        if not 0 < days <= len(self.dates):
+            raise ValueError("requested days exceed replay coverage")
+        return self.dates[:days]
 
 
 def replay_cohorts(available: int, extra: tuple[int, ...] = ()) -> tuple[int, ...]:
@@ -67,32 +63,18 @@ def read_batch_replay(path: Path) -> BatchReplay:
     data = json.loads(path.read_text(encoding="utf-8"))
     cohorts = tuple(data["cohorts"])
     selected = data["authorities"]
-    dates = ()
     version = data.get("version")
-    sources = ()
-    if version in (1, 2):
-        dates = tuple(date.fromisoformat(label) for label in data["utc_dates"])
-        extra = tuple(data.get("extra_cohorts", ())) if version == 2 else ()
-        expected = replay_cohorts(len(dates), extra)
-        if (
-            dates != tuple(sorted(set(dates))) or not dates
-            or cohorts != expected or tuple(selected) != AUTHORITIES[:AUTHORITY_COUNT]
-            or data["start_date"] != dates[0].isoformat() or "subregions" not in data
-        ):
-            raise ValueError("invalid CSV replay dates, cohorts, or authorities")
-    elif "version" in data:
+    if version not in (1, 2):
         raise ValueError("unsupported CSV replay manifest version")
-    elif not cohorts:
-        raise ValueError("capture coverage is insufficient for the batch experiment")
-    elif (
-        data["start_date"] != START_DATE.isoformat()
-        or len(cohorts) < 2
-        or cohorts != LEGACY_COHORTS[:len(cohorts)]
-        or len(selected) != AUTHORITY_COUNT
-        or tuple(selected) != tuple(authority for authority in AUTHORITIES if authority in selected)
-        or selected[0] != "CISO"
+    dates = tuple(date.fromisoformat(label) for label in data["utc_dates"])
+    extra = tuple(data.get("extra_cohorts", ())) if version == 2 else ()
+    if (
+        not dates or dates != tuple(sorted(set(dates)))
+        or cohorts != replay_cohorts(len(dates), extra) or tuple(selected) != AUTHORITIES
+        or data["start_date"] != dates[0].isoformat() or "subregions" not in data
     ):
-        raise ValueError("invalid authority selection or UTC cohorts in the batch manifest")
+        raise ValueError("invalid CSV replay dates, cohorts, or authorities")
+    sources = ()
     if version == 2:
         sources = tuple(data["source_files"])
         filenames = set()
@@ -129,19 +111,6 @@ def read_batch_replay(path: Path) -> BatchReplay:
     return BatchReplay(manifests, cohorts, subregions, dates, sources)
 
 
-def batch_snapshots(manifest: Path, dates: tuple[date, ...]) -> Iterator[tuple[date, Path]]:
-    snapshots = read_manifest(manifest)
-    for day in dates:
-        if day not in snapshots:
-            raise ValueError(f"{manifest.parent.name} has no snapshot for {day}")
-        yield day, snapshots[day]
-
-
-def normalize_snapshot(path: Path, day: date, authority: str) -> pd.DataFrame:
-    observations, _ = normalize_batch_snapshot(path, day, authority, ())
-    return observations
-
-
 def normalize_batch_snapshot(
     path: Path, day: date, authority: str, subregions: tuple[str, ...],
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
@@ -173,7 +142,6 @@ class AuthorityBatch:
     authority: str
     index: int
     dates: tuple[date, ...]
-    manifest: Path | None
     subregions: tuple[str, ...]
     schema: str
     work: Path
@@ -195,7 +163,7 @@ def authority_batch(replay: BatchReplay, index: int, days: int, schema: str, fau
     authority = replay.authorities[index]
     work = replay_path(trial_work(schema), authority)
     return AuthorityBatch(
-        authority, index, replay.selected_dates(days), replay.manifests.get(authority),
+        authority, index, replay.selected_dates(days),
         replay.subregions.get(authority, ()), schema, work, fault, replay.csv_sources,
     )
 
@@ -228,31 +196,18 @@ def _decode(rows: list, series: str) -> pd.DataFrame:
 
 
 def extract_authority(batch: AuthorityBatch, counts: dict[str, int]) -> str:
-    if batch.csv_sources:
-        paths = csv_paths(batch.csv_sources)
-        first, last = batch.dates[0], batch.dates[-1]
-        records = collect_rows(
-            paths, first, last + timedelta(days=1),
-            zones={batch.authority: batch.subregions}, dates=set(batch.dates),
-        )
-        counts["csv_bytes_scanned"] = sum(source["bytes"] for source in batch.csv_sources)
-        for day in batch.dates:
-            values = records.get((batch.authority, day), {})
-            payload = day_payload(day, batch.authority, values)
-            _atomic_write(batch.work / "raw" / f"{day}.json", json.dumps(payload).encode())
-            counts["rows_processed"] += len(values)
-            counts["days_processed"] += 1
-        return "raw"
-
-    if batch.manifest is None:
-        raise ValueError("extract requires an input manifest")
-    for day, snapshot in batch_snapshots(batch.manifest, batch.dates):
-        target = batch.work / "raw" / f"{day}.json"
-        _atomic_write(target, snapshot.read_bytes())
-        captured_day, rows = read_snapshot(target, include_subregions=bool(batch.subregions))
-        if captured_day != day:
-            raise ValueError(f"{snapshot.name} describes {captured_day}, expected {day}")
-        counts["rows_processed"] += sum(len(series) for series in rows.values())
+    paths = csv_paths(batch.csv_sources)
+    first, last = batch.dates[0], batch.dates[-1]
+    records = collect_rows(
+        paths, first, last + timedelta(days=1),
+        zones={batch.authority: batch.subregions}, dates=set(batch.dates),
+    )
+    counts["csv_bytes_scanned"] = sum(source["bytes"] for source in batch.csv_sources)
+    for day in batch.dates:
+        values = records.get((batch.authority, day), {})
+        payload = day_payload(day, batch.authority, values)
+        _atomic_write(batch.work / "raw" / f"{day}.json", json.dumps(payload).encode())
+        counts["rows_processed"] += len(values)
         counts["days_processed"] += 1
     return "raw"
 
@@ -328,6 +283,8 @@ def main() -> None:
     args = parser.parse_args()
     try:
         replay = read_batch_replay(args.manifest)
+        if not replay.csv_sources:
+            raise ValueError("the authority benchmark requires a direct CSV manifest")
         schema = os.environ.get("RENEWFLOW_BENCHMARK_SCHEMA", "")
         if schema != f"trial_{args.run_id}":
             raise ValueError("run ID must match the isolated benchmark schema")

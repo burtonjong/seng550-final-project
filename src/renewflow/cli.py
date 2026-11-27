@@ -11,7 +11,7 @@ import pandas as pd
 import psycopg
 
 from renewflow.batch import normalize_batch_snapshot, read_batch_replay
-from renewflow.db import connect_observations, load_day, publish_day
+from renewflow.db import connect_observations, publish_day
 from renewflow.eia import SERIES
 from renewflow.pipeline import (
     EXTRACT_RETRIES,
@@ -97,7 +97,9 @@ def main() -> None:
             parser.error("--end-date must be later than --start-date")
         if args.end_date > datetime.now(UTC).date():
             parser.error("choose completed UTC days")
-    if args.manifest and (args.fail_first or os.environ.get("RENEWFLOW_BENCHMARK_SCHEMA")):
+    if os.environ.get("RENEWFLOW_BENCHMARK_SCHEMA"):
+        parser.error("use the authority benchmark runner for trial schemas")
+    if args.manifest and args.fail_first:
         parser.error("--manifest uses the application database without fault injection")
 
     current_day = None
@@ -110,7 +112,7 @@ def main() -> None:
                 parser.exit(1, "Some authority-days failed validation. See the load summary.\n")
             return
 
-        fault = replay_fault(args.fail_first, replay=True)
+        fault = replay_fault(args.fail_first)
         snapshots = {}
         if args.snapshot:
             day, _ = read_snapshot(args.snapshot)
@@ -130,8 +132,7 @@ def main() -> None:
         with record_attempt(print, runner="python", run_id=run_id, stage="run") as run_counts:
             run_counts["days_requested"] = len(dates)
             run_counts["days_published"] = 0
-            schema = os.environ.get("RENEWFLOW_BENCHMARK_SCHEMA")
-            with connect_observations(benchmark_schema=schema) as connection:
+            with connect_observations() as connection:
                 for current_day in dates:
                     results = [
                         _extract(current_day, metric, snapshots[current_day], fault, run_id)
@@ -142,10 +143,7 @@ def main() -> None:
                         print, runner="python", run_id=run_id, stage="load_day", day=current_day,
                     ) as counts:
                         counts["rows_validated"] = len(batch)
-                        if schema is None:
-                            status, changed_rows = publish_day(connection, batch)
-                        else:
-                            status, changed_rows = "committed", load_day(connection, batch)
+                        status, changed_rows = publish_day(connection, batch)
                         counts["days_skipped"] = int(status == "skipped")
                         counts["rows_changed"] = changed_rows
                     run_counts["days_published"] += 1

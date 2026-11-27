@@ -6,10 +6,11 @@ Run from the repository root after [local setup](../README.md). The CSV importer
 
 ```sh
 uv run --locked python -m experiments.import_eia930 \
-  --input-dir data --output-dir .renewflow/csv-replay-2025 --end-date 2026-01-01
+  --input-dir data --output-dir .renewflow/csv-replay \
+  --start-date 2024-01-15 --end-date 2024-01-22
 ```
 
-The default start is January 15, 2025. Supply `--start-date` for earlier history. The end is exclusive and defaults to the day after the last selected observation. Dates excluded during import are recorded by authority in `coverage`. Identical overlaps collapse. For a revision, use a source directory containing the replacement files and the other inputs you still want to include. Conflicting overlaps stop the import and identify the source row.
+This prepares the demo week from the same 2024–2025 source directory. Change the explicit dates and output directory for a different replay. The end is exclusive and defaults to the day after the last selected observation. Dates excluded during import are recorded by authority in `coverage`. Identical overlaps collapse. For a revision, use a source directory containing the replacement files and the other inputs you still want to include. Conflicting overlaps stop the import and identify the source row.
 
 ## Load or resume a range with sequential Python
 
@@ -17,8 +18,8 @@ Apply both schemas once, including on an existing volume, using the [local demo 
 
 ```sh
 uv run --locked --env-file .env python -m renewflow.cli \
-  --manifest .renewflow/csv-replay-2025/manifest.json \
-  --start-date 2025-01-15 --end-date 2025-01-22
+  --manifest .renewflow/csv-replay/manifest.json \
+  --start-date 2024-01-15 --end-date 2024-01-22
 ```
 
 Each authority-day is validated and committed independently. The summary counts committed, updated, skipped, and rejected authority-days. Dates excluded during import appear in the manifest's coverage report. A missing listed snapshot or a failed validation exits unsuccessfully. Other valid days can be committed during the same run.
@@ -27,7 +28,7 @@ After interruption, repeat the command. PostgreSQL skips matching completed days
 
 ## Trigger a one-day replay manually
 
-Set `RENEWFLOW_REPLAY_DIR=./.renewflow/csv-replay-2025` in `.env` and restart the Airflow profile to apply the mount.
+Use the shared `RENEWFLOW_REPLAY_DIR=./.renewflow` in `.env`. Your demo replay and benchmark manifest can use this mount together.
 
 ```sh
 docker compose --profile airflow up -d --build --wait
@@ -37,11 +38,11 @@ Open **renewflow_daily**, unpause it, and select **Trigger → Single Run**. Set
 
 ```json
 {
-  "observation_date": "2025-01-15",
-  "replay_manifest": "CISO/manifest.json"
+  "observation_date": "2024-01-15",
+  "replay_manifest": "csv-replay/CISO/manifest.json"
 }
 ```
 
-`observation_date` selects a completed UTC day of EIA observations. The Airflow Data Interval field does not select the dataset. The manifest path is relative to the mounted replay directory and tells the DAG which local snapshot to open. The three CISO authority-wide series publish to the application database together. For a retry demonstration, add `"fail_first": "2025-01-15:wind"` to the JSON. The first wind attempt fails deliberately, retries, and allows the load to proceed after it succeeds.
+`observation_date` selects a completed UTC day of EIA observations. The Airflow Data Interval field does not select the dataset. The manifest path is relative to the mounted replay directory and tells the DAG which local snapshot to open. The three CISO authority-wide series publish to the application database together. For a retry demonstration, add `"fail_first": "2024-01-15:wind"` to the JSON. The first wind attempt fails deliberately, retries, and allows the load to proceed after it succeeds.
 
 Use the [staged benchmark harness](BENCHMARKS.md) for historical Airflow ranges and paper measurements. It submits one `renewflow_authority_batches` DAG run per trial and selects the same manifest dates as the Python runner.

@@ -1,36 +1,25 @@
 import json
 from contextlib import nullcontext
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from runpy import run_path
 from unittest.mock import Mock
 
 import pytest
 
-from experiments import batch_benchmark, report
+from experiments import batch_benchmark, import_eia930, report
 from renewflow import batch
 
 
-def test_load_retry_reuses_transformed_days_and_publishes_each_row_once(tmp_path, monkeypatch):
+def test_load_retry_reuses_transformed_days_and_publishes_each_row_once(tmp_path, monkeypatch, write_days):
     source = tmp_path / "source"
     source.mkdir()
-    real_capture = json.loads((Path(__file__).parent / "fixtures/eia-ciso-2025-01-15.json").read_text())
-    snapshots = {}
     dates = tuple(batch.START_DATE + timedelta(days=offset) for offset in (0, 1, 2, 4, 5, 6, 7))
-    for day in dates:
-        offset = (day - batch.START_DATE).days
-        capture = json.loads(json.dumps(real_capture))
-        capture["utc_date"] = str(day)
-        for payload in capture["series"].values():
-            for row in payload["response"]["data"]:
-                label, hour = row["period"].split("T")
-                row["period"] = f"{date.fromisoformat(label) + timedelta(days=offset)}T{hour}"
-        snapshot = source / f"{day}.json"
-        snapshot.write_text(json.dumps(capture))
-        snapshots[str(day)] = snapshot.name
-    manifest = source / "manifest.json"
-    manifest.write_text(json.dumps({"snapshots": snapshots}))
-    replay = batch.BatchReplay({"CISO": manifest}, (7,), dates=dates)
+    write_days(source, "test", dates)
+    prepared = tmp_path / "benchmark"
+    import_eia930.import_csv(source, prepared, dates[0], manifest_only=True)
+    replay = batch.read_batch_replay(prepared / "manifest.json")
+    monkeypatch.setenv("RENEWFLOW_CSV_DIR", str(source))
     monkeypatch.setattr(batch, "STAGING_ROOT", tmp_path / "stage")
     context = batch.authority_batch(replay, 0, 7, "trial_" + "1" * 32, True)
     stored = {}
@@ -39,6 +28,8 @@ def test_load_retry_reuses_transformed_days_and_publishes_each_row_once(tmp_path
         before = len(stored)
         for authority, hour, metric, value in observations.itertuples(index=False, name=None):
             stored[authority, hour, metric] = value
+        for authority, hour, zone, value in subregional.itertuples(index=False, name=None):
+            stored[authority, hour, zone] = value
         return len(stored) - before
 
     monkeypatch.setattr(batch, "connect_observations", lambda **kwargs: nullcontext(object()))
@@ -48,11 +39,11 @@ def test_load_retry_reuses_transformed_days_and_publishes_each_row_once(tmp_path
     normalized = batch.execute_stage(context, "transform", raw, runner="python", attempt=1, emit=emit)
     with pytest.raises(batch.InjectedLoadFailure):
         batch.execute_stage(context, "load", normalized, runner="python", attempt=1, emit=emit)
-    assert len(stored) == 216
-    for snapshot in source.glob("*.json"):
+    assert len(stored) == 504
+    for snapshot in source.glob("*.csv"):
         snapshot.unlink()
     batch.execute_stage(context, "load", normalized, runner="python", attempt=2, emit=emit)
-    assert len(stored) == 504
+    assert len(stored) == 1176
     assert {hour.date() for _, hour, _ in stored} == set(dates)
     events = batch.read_attempts(context.work.parent)
     assert [(event["stage"], event["attempt"], event["status"]) for event in events] == [
@@ -61,19 +52,19 @@ def test_load_retry_reuses_transformed_days_and_publishes_each_row_once(tmp_path
     ]
     assert events[-2]["days_committed"] == 3
     assert events[-1]["days_committed"] == 7
-    assert events[-1]["rows_changed"] == 288
+    assert events[-1]["rows_changed"] == 672
     attempts = events + [
         {
             **events[0], "stage": name, "authority": batch.AUTHORITIES[index // 3], "status": "success",
-            "days_processed": 7, "rows_processed": 504,
+            "days_processed": 7, "rows_processed": 1176,
         }
         for index, name in enumerate(batch.BATCH_TASKS) if index >= 3
     ]
     recovery = batch_benchmark._verify_attempts(
-        attempts, True, 7, {"observations_by_authority": dict.fromkeys(batch.AUTHORITIES[:4], 504)},
+        attempts, True, 7, {"observations_by_authority": dict.fromkeys(batch.AUTHORITIES, 1176)},
     )
     assert recovery["recovery_repeated_days"] == 3
-    assert recovery["recovery_repeated_rows"] == 216
+    assert recovery["recovery_repeated_rows"] == 504
     assert recovery["recovery_required_operator"] is False
 
     staged = context.work / "raw" / f"{batch.START_DATE}.json"

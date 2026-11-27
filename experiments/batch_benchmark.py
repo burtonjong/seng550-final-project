@@ -16,9 +16,9 @@ from uuid import uuid4
 import psycopg
 import requests
 
-from experiments import CSV_EXPERIMENT, STAGED_EXPERIMENT, input_identity
+from experiments import CSV_EXPERIMENT, input_identity
 from experiments.airflow import Airflow
-from experiments.benchmark import (
+from experiments.benchmark_support import (
     AIRFLOW_VERSION,
     COMPOSE,
     DUAL_RUNNERS,
@@ -38,11 +38,8 @@ from renewflow.batch import (
     BATCH_TASKS,
     FAULT_AFTER_DAYS,
     STAGES,
-    START_DATE,
     BatchReplay,
-    batch_snapshots,
     normalize_batch_rows,
-    normalize_batch_snapshot,
     read_attempts,
     read_batch_replay,
     trial_work,
@@ -59,36 +56,21 @@ LOAD_FAULT = "CISO load after three committed days"
 
 def prepare_input(replay: BatchReplay, days: int) -> dict:
     dates = replay.selected_dates(days)
-    captures = {}
     observation_hash = hashlib.sha256()
     subregional_hash = hashlib.sha256()
     observations_by_authority = {}
     zone_count = 0
-    records = None
-    if replay.csv_sources:
-        records = collect_rows(
-            csv_paths(replay.csv_sources), dates[0], dates[-1] + timedelta(days=1),
-            zones=replay.subregions, dates=set(dates),
-        )
+    records = collect_rows(
+        csv_paths(replay.csv_sources), dates[0], dates[-1] + timedelta(days=1),
+        zones=replay.subregions, dates=set(dates),
+    )
     for authority in sorted(replay.authorities):
-        subregions = replay.subregions.get(authority, ())
+        subregions = replay.subregions[authority]
         observations_by_authority[authority] = 0
-        if records is None:
-            manifest = replay.manifests[authority]
-            recorded = json.loads(manifest.read_text(encoding="utf-8"))["captures"]
-            snapshots = dict(batch_snapshots(manifest, dates))
         for day in dates:
-            if records is None:
-                path = snapshots[day]
-                metadata = recorded[day.isoformat()]
-                if hashlib.sha256(path.read_bytes()).hexdigest() != metadata["sha256"]:
-                    raise ValueError(f"snapshot checksum differs from the manifest for {authority}/{day}")
-                captures[f"{authority}/{day}"] = metadata
-                observations, subregional = normalize_batch_snapshot(path, day, authority, subregions)
-            else:
-                payload = day_payload(day, authority, records.get((authority, day), {}))
-                rows = snapshot_rows(payload, include_subregions=True)
-                observations, subregional = normalize_batch_rows(rows, day, authority, subregions)
+            payload = day_payload(day, authority, records.get((authority, day), {}))
+            rows = snapshot_rows(payload, include_subregions=True)
+            observations, subregional = normalize_batch_rows(rows, day, authority, subregions)
             ordered = observations.sort_values(["hour_start_utc", "metric"])
             _update_digest(observation_hash, ordered.itertuples(index=False, name=None))
             zone_rows = 0
@@ -97,20 +79,11 @@ def prepare_input(replay: BatchReplay, days: int) -> dict:
                 zone_rows = len(subregional)
             observations_by_authority[authority] += len(observations) + zone_rows
             zone_count += zone_rows
-    if replay.csv_sources:
-        unique_bytes = sum(source["bytes"] for source in replay.csv_sources)
-        source_metadata = {
-            "source_files": list(replay.csv_sources), "distinct_csv_bytes": unique_bytes,
-            "input_bytes": unique_bytes * len(replay.authorities),
-        }
-    else:
-        source_metadata = {
-            "captures": captures, "source_rows": sum(item["source_rows"] for item in captures.values()),
-            "input_bytes": sum(item["bytes"] for item in captures.values()),
-        }
+    unique_bytes = sum(source["bytes"] for source in replay.csv_sources)
     return {
         "utc_dates": [day.isoformat() for day in dates],
-        **source_metadata,
+        "source_files": list(replay.csv_sources), "distinct_csv_bytes": unique_bytes,
+        "input_bytes": unique_bytes * len(replay.authorities),
         "expected_observations": sum(observations_by_authority.values()),
         "observations_by_authority": observations_by_authority,
         "expected_observation_sha256": observation_hash.hexdigest(),
@@ -287,11 +260,10 @@ def run_trial(
     trial_id = uuid4().hex
     schema = f"trial_{trial_id}"
     work = trial_work(schema)
-    dates = inputs.get("utc_dates")
-    first = date.fromisoformat(dates[0]) if dates else START_DATE
-    last = date.fromisoformat(dates[-1]) if dates else first + timedelta(days=days - 1)
+    dates = inputs["utc_dates"]
+    first, last = date.fromisoformat(dates[0]), date.fromisoformat(dates[-1])
     result = {
-        "experiment": CSV_EXPERIMENT if "source_files" in inputs else STAGED_EXPERIMENT,
+        "experiment": CSV_EXPERIMENT,
         "trial_id": trial_id, "schema": schema, "runner": runner, "slots": slots,
         "started_at": datetime.now(UTC).isoformat(), "start_date": first.isoformat(),
         "end_date": (last + timedelta(days=1)).isoformat(), "days": days,
@@ -307,7 +279,7 @@ def run_trial(
         work.mkdir(parents=True, exist_ok=False)
         # The host creates this trial directory and the container uses a different UID.
         work.chmod(0o1777)
-        result.update(_runtime_settings(_prepare_database(schema, include_subregions=True)))
+        result.update(_runtime_settings(_prepare_database(schema)))
         launched_at = datetime.now(UTC)
         result["launched_at"] = launched_at.isoformat()
         if runner == "python":
@@ -328,10 +300,9 @@ def run_trial(
         if not success:
             raise ValueError("the runner did not complete successfully")
         metrics.update(_verify_attempts(events, fault, days, inputs))
-        if "source_files" in inputs:
-            scanned = sum(event.get("csv_bytes_scanned", 0) for event in events)
-            if scanned != inputs["input_bytes"]:
-                raise ValueError("recorded CSV scan bytes differ from the benchmark workload")
+        scanned = sum(event.get("csv_bytes_scanned", 0) for event in events)
+        if scanned != inputs["input_bytes"]:
+            raise ValueError("recorded CSV scan bytes differ from the benchmark workload")
         if metrics["peak_concurrent_stages"] > slots:
             raise ValueError("recorded concurrent stages exceeded the configured slot count")
         if runner == "airflow":
@@ -441,7 +412,7 @@ def run_suite(args, airflow: Airflow, replay: BatchReplay) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, default=Path(".renewflow/csv-benchmark/manifest.json"))
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--mode", choices=("all", "clean", "recovery"), default="all",
                         help="run the full suite, clean trials, or recovery against existing clean trials")

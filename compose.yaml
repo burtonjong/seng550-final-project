@@ -23,7 +23,7 @@ x-airflow: &airflow
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - ${RENEWFLOW_CSV_DIR:-./data}:/opt/airflow/csv:ro
-    - ${RENEWFLOW_REPLAY_DIR:-./tests/fixtures}:/opt/airflow/replay:ro
+    - ${RENEWFLOW_REPLAY_DIR:-./.renewflow}:/opt/airflow/replay:ro
     - ${RENEWFLOW_STAGING_DIR:-./.renewflow/staging}:/opt/airflow/staging
     - airflow_logs:/opt/airflow/logs
     - airflow_local:/opt/airflow/local

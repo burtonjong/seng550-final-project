@@ -50,7 +50,7 @@ def extract_and_validate(metric: str) -> dict:
             manifest = conf.get("replay_manifest")
             if not isinstance(manifest, str) or not manifest:
                 raise ValueError("replay_manifest must be a relative manifest filename")
-            fault = replay_fault(conf.get("fail_first"), replay=True)
+            fault = replay_fault(conf.get("fail_first"))
             fail_on_first_attempt(fault, day, metric, attempt)
             path = replay_path(Path("/opt/airflow/replay"), manifest)
             snapshots = read_manifest(path)
@@ -78,9 +78,11 @@ def publish_day(solar: dict, wind: dict, demand: dict) -> None:
     import pandas as pd
     import psycopg
 
-    from renewflow.db import connect_observations, load_day, publish_day as publish_application_day
+    from renewflow.db import connect_observations, publish_day as publish_application_day
 
     day, run_id, attempt, conf = _run_context()
+    if conf.get("benchmark_schema") is not None:
+        raise AirflowFailException("use the authority benchmark DAG for trial schemas")
     try:
         with record_attempt(
             log.info, runner="airflow", run_id=run_id, stage="load_day", day=day, attempt=attempt,
@@ -96,16 +98,10 @@ def publish_day(solar: dict, wind: dict, demand: dict) -> None:
             ]
             batch = pd.concat(frames, ignore_index=True)
             counts["rows_validated"] = len(batch)
-            schema = conf.get("benchmark_schema")
-            if schema is not None and (not isinstance(schema, str) or not conf.get("replay_manifest")):
-                raise ValueError("benchmark_schema requires a replay manifest and a schema name")
-            with connect_observations(benchmark_schema=schema) as connection:
-                if schema is None:
-                    status, changed = publish_application_day(connection, batch)
-                    counts["days_skipped"] = int(status == "skipped")
-                    counts["rows_changed"] = changed
-                else:
-                    counts["rows_changed"] = load_day(connection, batch)
+            with connect_observations() as connection:
+                status, changed = publish_application_day(connection, batch)
+                counts["days_skipped"] = int(status == "skipped")
+                counts["rows_changed"] = changed
     except psycopg.Error as error:
         code = f" (SQLSTATE {error.sqlstate})" if error.sqlstate else ""
         raise AirflowFailException(f"PostgreSQL load failed for {day} UTC{code}") from None

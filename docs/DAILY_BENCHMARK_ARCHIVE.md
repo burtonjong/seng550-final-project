@@ -2,7 +2,7 @@
 
 The earlier CISO experiment used frozen hourly EIA observations for January 15 through February 13, 2025, and the former scheduled daily DAG. It collected 45 verified timing trials across 1, 7, and 30 UTC days, plus two controlled wind-extraction retry trials. Each workload compared sequential Python with one-slot and four-slot Airflow. The current [staged benchmark](BENCHMARKS.md) uses a different task graph and input set.
 
-Keep the original replay files, run JSON, and generated reports together. To reproduce the old execution protocol, use the code revision and runtime configuration associated with the original trial records and its saved replay manifest. To regenerate figures and tables from the saved trials on the current branch, set `results_dir` to the completed archive directory and run:
+Keep the original replay files, run JSON, and generated reports together. Git revision `0ec277a` retains the daily benchmark CLI and backfill scheduler. Use a separate checkout with the original runtime configuration and saved replay manifest to reproduce that protocol. To regenerate figures and tables from the saved trials on the current branch, set `results_dir` to the completed archive directory and run:
 
 ```sh
 uv run --locked --with matplotlib==3.11.2 python -m experiments.report --results-dir "$results_dir"
