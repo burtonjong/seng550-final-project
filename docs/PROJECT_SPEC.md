@@ -18,7 +18,7 @@ Over a one-hour interval, hourly average MW is numerically equal to MWh. Preserv
 | Dimension | Implication for RenewFlow |
 | --- | --- |
 | Volume | The eight 2024–2025 source files hold more than 2.5 million rows. The largest verified cohort processes 806,400 observations after filtering to selected authorities, zones, and complete UTC days. |
-| Velocity | Observations are hourly. Historical files support repeatable manual replay and extensions as new file periods arrive. |
+| Velocity | Observations are hourly. Historical CSVs support repeatable trials and extensions as new file periods arrive. |
 | Variety | Balance and Subregion have different schemas and identifiers. UTC normalization aligns their time axis while retaining authority and zone keys. |
 | Veracity | Missing observations, revisions, conflicting duplicates, and local reporting anomalies affect coverage. The manifest records the source hashes and the excluded dates with reasons. |
 | Value | Hourly matching supports analysis of renewable generation, demand peaks, and zone-level demand. Stage telemetry shows where orchestration time and retry work occur. |
@@ -26,9 +26,9 @@ Over a one-hour interval, hourly average MW is numerically equal to MWh. Preserv
 ## UTC replay and publication contract
 
 - The observation interval begins at 00:00 UTC and ends at midnight at the start of the next date. The input hour ending at that midnight belongs to the preceding UTC day. Normalize to `hour_start_utc` by subtracting one hour.
-- The preparation command identifies candidate days, validates their coverage, and records the exact shared benchmark dates without generating benchmark snapshots. Benchmark Extract, Transform, and Load use the same ordered dates, even across gaps. The one-day demo accepts a manual observation date and a replay manifest.
+- The preparation command identifies candidate days, validates their coverage, and records the exact shared benchmark dates without generating benchmark snapshots. Benchmark Extract, Transform, and Load use the same ordered dates, even across gaps.
 - Transform checks all expected timestamps, series and zone identifiers, units, finite numeric values, and duplicates. Authority demand must be positive. Zone demand can be zero. Collapse identical duplicates and reject conflicting values and incomplete days.
-- Store observations with keys `(respondent, hour_start_utc, metric)` and `(respondent, hour_start_utc, subregion)`. Transactional upserts apply changed values. Application loads skip an authority-day whose validated content matches the committed checkpoint. Benchmark trials use fresh schemas and run the full write path. [Application setup and replay](BACKFILLS.md)
+- Store observations with keys `(respondent, hour_start_utc, metric)` and `(respondent, hour_start_utc, subregion)`. Transactional upserts apply changed values. Benchmark trials use fresh schemas and run the full write path.
 
 ## Analytics and monitoring
 

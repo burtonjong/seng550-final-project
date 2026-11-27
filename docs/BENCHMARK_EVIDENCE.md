@@ -4,7 +4,7 @@ The 2024–2025 timing comparison is saved locally in `.renewflow/extended-resul
 
 At 334 days, four-slot Airflow took 26.82 seconds and sequential Python took 24.42 seconds. At 700 days and 806,400 observations, Airflow took 31.89 seconds and Python took 41.69 seconds. These are medians across three clean trials per configuration. Both cohorts scanned the same eight CSV files.
 
-The local archive `.renewflow/benchmark-evidence.zip` contains the trial JSON, tables, figure, and manifests for this run. The default `csv-benchmark/manifest.json` matches the original run manifest byte for byte. Keep the eight original CSVs with the evidence when transferring it. This was a clean timing run. To collect fault-injection measurements using the same inputs, follow the [recovery workflow](BENCHMARKS.md#what-the-recovery-trials-test).
+The local archive `.renewflow/benchmark-evidence.zip` contains the trial JSON, tables, figure, and manifests for this run. The default `csv-benchmark/manifest.json` matches the original run manifest byte for byte. Keep the eight original CSVs with the evidence when transferring it. This was a clean timing run. To collect fault-injection measurements using the same inputs, follow the [recovery workflow](BENCHMARKS.md#run-fault-injection-against-the-saved-clean-trials).
 
 Regenerate the tables and figure from the saved trials:
 

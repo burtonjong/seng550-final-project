@@ -31,7 +31,7 @@ def test_subregional_validation_separates_codes_and_rejects_conflicting_duplicat
 
 
 def test_suite_separates_pilots_and_rotates_three_repetitions(monkeypatch, tmp_path):
-    replay = batch.BatchReplay({authority: Path(authority) for authority in batch.AUTHORITIES[:4]}, (*batch.COHORTS, 334))
+    replay = batch.BatchReplay((*batch.COHORTS, 334), dict.fromkeys(batch.AUTHORITIES, ("ZONE",)), (), ())
     args = SimpleNamespace(output_dir=tmp_path, mode="all")
     airflow = Mock()
     airflow.call.return_value = {"is_paused": False}

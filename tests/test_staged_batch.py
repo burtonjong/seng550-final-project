@@ -17,7 +17,7 @@ def test_load_retry_reuses_transformed_days_and_publishes_each_row_once(tmp_path
     dates = tuple(batch.START_DATE + timedelta(days=offset) for offset in (0, 1, 2, 4, 5, 6, 7))
     write_days(source, "test", dates)
     prepared = tmp_path / "benchmark"
-    import_eia930.import_csv(source, prepared, dates[0], manifest_only=True)
+    import_eia930.import_csv(source, prepared, dates[0])
     replay = batch.read_batch_replay(prepared / "manifest.json")
     monkeypatch.setenv("RENEWFLOW_CSV_DIR", str(source))
     monkeypatch.setattr(batch, "STAGING_ROOT", tmp_path / "stage")

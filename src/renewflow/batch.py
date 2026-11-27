@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -37,15 +37,14 @@ SUBREGION_CODE = re.compile(r"[A-Z0-9]{2,4}")
 
 @dataclass(frozen=True)
 class BatchReplay:
-    manifests: dict[str, Path]
     cohorts: tuple[int, ...]
-    subregions: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    dates: tuple[date, ...] = ()
-    csv_sources: tuple[dict, ...] = ()
+    subregions: dict[str, tuple[str, ...]]
+    dates: tuple[date, ...]
+    csv_sources: tuple[dict, ...]
 
     @property
     def authorities(self) -> tuple[str, ...]:
-        return tuple(self.subregions if self.csv_sources else self.manifests)
+        return tuple(self.subregions)
 
     def selected_dates(self, days: int) -> tuple[date, ...]:
         if not 0 < days <= len(self.dates):
@@ -64,51 +63,43 @@ def read_batch_replay(path: Path) -> BatchReplay:
     cohorts = tuple(data["cohorts"])
     selected = data["authorities"]
     version = data.get("version")
-    if version not in (1, 2):
+    if version != 2:
         raise ValueError("unsupported CSV replay manifest version")
     dates = tuple(date.fromisoformat(label) for label in data["utc_dates"])
-    extra = tuple(data.get("extra_cohorts", ())) if version == 2 else ()
+    extra = tuple(data.get("extra_cohorts", ()))
     if (
         not dates or dates != tuple(sorted(set(dates)))
         or cohorts != replay_cohorts(len(dates), extra) or tuple(selected) != AUTHORITIES
         or data["start_date"] != dates[0].isoformat() or "subregions" not in data
     ):
         raise ValueError("invalid CSV replay dates, cohorts, or authorities")
-    sources = ()
-    if version == 2:
-        sources = tuple(data["source_files"])
-        filenames = set()
-        for source in sources:
-            name = source["filename"]
-            if (
-                not name.endswith(".csv") or name != Path(name).name or name in filenames
-                or type(source["bytes"]) is not int or source["bytes"] <= 0
-                or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
-            ):
-                raise ValueError("invalid benchmark CSV source metadata")
-            filenames.add(name)
-        if len(sources) < 2:
-            raise ValueError("the benchmark manifest must list Balance and Subregion CSV files")
-        manifests = {}
-    else:
-        manifests = {
-            authority: replay_path(path.parent, data["authority_manifests"][authority]) for authority in selected
-        }
+    sources = tuple(data["source_files"])
+    filenames = set()
+    for source in sources:
+        name = source["filename"]
+        if (
+            not name.endswith(".csv") or name != Path(name).name or name in filenames
+            or type(source["bytes"]) is not int or source["bytes"] <= 0
+            or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
+        ):
+            raise ValueError("invalid benchmark CSV source metadata")
+        filenames.add(name)
+    if len(sources) < 2:
+        raise ValueError("the benchmark manifest must list Balance and Subregion CSV files")
     subregions = {}
-    if "subregions" in data:
-        configured = data["subregions"]
-        if not isinstance(configured, dict) or configured.keys() != set(selected):
-            raise ValueError("the batch manifest must list subregions for every authority")
-        for authority in selected:
-            codes = configured[authority]
-            if (
-                not isinstance(codes, list) or not codes
-                or not all(isinstance(code, str) and SUBREGION_CODE.fullmatch(code) for code in codes)
-                or codes != sorted(set(codes))
-            ):
-                raise ValueError(f"invalid subregion list for {authority}")
-            subregions[authority] = tuple(codes)
-    return BatchReplay(manifests, cohorts, subregions, dates, sources)
+    configured = data["subregions"]
+    if not isinstance(configured, dict) or configured.keys() != set(selected):
+        raise ValueError("the batch manifest must list subregions for every authority")
+    for authority in selected:
+        codes = configured[authority]
+        if (
+            not isinstance(codes, list) or not codes
+            or not all(isinstance(code, str) and SUBREGION_CODE.fullmatch(code) for code in codes)
+            or codes != sorted(set(codes))
+        ):
+            raise ValueError(f"invalid subregion list for {authority}")
+        subregions[authority] = tuple(codes)
+    return BatchReplay(cohorts, subregions, dates, sources)
 
 
 def normalize_batch_snapshot(
@@ -283,8 +274,6 @@ def main() -> None:
     args = parser.parse_args()
     try:
         replay = read_batch_replay(args.manifest)
-        if not replay.csv_sources:
-            raise ValueError("the authority benchmark requires a direct CSV manifest")
         schema = os.environ.get("RENEWFLOW_BENCHMARK_SCHEMA", "")
         if schema != f"trial_{args.run_id}":
             raise ValueError("run ID must match the isolated benchmark schema")

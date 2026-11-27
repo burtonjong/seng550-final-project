@@ -8,7 +8,7 @@ Run commands from the repository root after [project setup](../README.md).
 uv run --locked pytest -m "not postgres"
 ```
 
-The tests exercise CSV extension and overlaps, coverage gaps, UTC boundaries, replay, and staged recovery. Small fixtures supply deterministic input. The DAG structure check runs when the Airflow SDK is installed.
+The tests exercise CSV extension and overlaps, coverage gaps, UTC boundaries, benchmark staging, and recovery. Small fixtures supply deterministic input. The DAG structure check runs when the Airflow SDK is installed.
 
 ## PostgreSQL integration tests
 
@@ -26,4 +26,4 @@ Set `RENEWFLOW_TEST_DATABASE_URL` in the same `.env`. The default host port is `
 uv run --locked --env-file .env pytest -m postgres
 ```
 
-These tests use isolated schemas in `renewflow_test` to check reruns, revisions, checkpoint rollback, and SQL analytics. To run the full pytest suite, use `uv run --locked --env-file .env pytest`.
+These tests use isolated schemas in `renewflow_test` to check reruns, revisions, transactional rollback, and SQL analytics. To run the full pytest suite, use `uv run --locked --env-file .env pytest`.

@@ -8,7 +8,7 @@ from experiments import batch_benchmark, benchmark_support
 from experiments.report import summarize
 from renewflow.db import connect_observations
 
-MANIFEST = Path(__file__).parent / "fixtures" / "replay-manifest.json"
+MANIFEST = Path(__file__).parent / "fixtures" / "eia-ciso-2025-01-15.json"
 
 
 def test_suite_rejects_a_manifest_outside_the_airflow_mount_before_creating_trials(monkeypatch, tmp_path, capsys):

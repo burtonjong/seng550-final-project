@@ -1,4 +1,4 @@
-"""Read sanitized EIA snapshots for either runner."""
+"""Read staged hourly records and resolve benchmark paths."""
 
 import json
 from datetime import date
@@ -38,26 +38,3 @@ def replay_path(root: Path, filename: str) -> Path:
     if path.is_absolute() or not resolved.is_relative_to(root.resolve()):
         raise ValueError("replay files must be relative paths inside the replay directory")
     return resolved
-
-
-def read_manifest(path: Path) -> dict[date, Path]:
-    try:
-        entries = json.loads(path.read_text(encoding="utf-8"))["snapshots"]
-        if not isinstance(entries, dict) or not entries:
-            raise ValueError
-        snapshots = {}
-        for label, filename in entries.items():
-            day = date.fromisoformat(label)
-            if label != day.isoformat() or not isinstance(filename, str) or not filename:
-                raise ValueError
-            snapshots[day] = replay_path(path.parent, filename)
-        return snapshots
-    except (KeyError, TypeError, ValueError):
-        raise ValueError(f"{path.name} must map ISO dates to relative snapshot files") from None
-
-
-def read_series(path: Path, day: date, metric: str) -> list[dict[str, object]]:
-    actual_day, rows = read_snapshot(path)
-    if day != actual_day:
-        raise ValueError(f"{path.name} describes {actual_day}, expected {day}")
-    return rows[metric]

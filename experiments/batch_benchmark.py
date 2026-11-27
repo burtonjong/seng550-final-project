@@ -426,8 +426,6 @@ def main() -> None:
         args.manifest = args.manifest.resolve()
         args.airflow_manifest = _airflow_manifest_path(args.manifest)
         replay = read_batch_replay(args.manifest)
-        if not replay.csv_sources:
-            raise ValueError("prepare a direct CSV benchmark manifest with experiments.import_eia930 --manifest-only")
         args.output_dir.mkdir(parents=True, exist_ok=True)
         if args.mode != "recovery" and any(args.output_dir.iterdir()):
             raise ValueError("use an empty output directory for the authority batch suite")

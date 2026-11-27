@@ -1,8 +1,8 @@
 # RenewFlow
 
-RenewFlow is a SENG 550 project that compares sequential Python and Apache Airflow on the same renewable-energy ETL workload. It imports local EIA-930 Balance and Subregion CSVs, validates hourly solar generation, wind generation, and demand, and publishes observations and SQL summaries to PostgreSQL. The application supports manual replay and resumable imports. PostgreSQL and Airflow run locally in Docker Compose.
+RenewFlow is a SENG 550 project that compares sequential Python and Apache Airflow on the same renewable-energy ETL workload. It imports local EIA-930 Balance and Subregion CSVs, validates hourly solar generation, wind generation, and demand, and publishes observations and SQL summaries to PostgreSQL. PostgreSQL and Airflow run locally in Docker Compose.
 
-The benchmark reads the original CSV files during four independent Extract → Transform → Load chains and compares sequential Python with Airflow at one and four task slots. The default 2024–2025 dataset supports 1-, 7-, 30-, 334-, and 700-day workloads. The local demo uses observations from the same dataset. Trials measure wall time, throughput, task overlap, and recovery from a controlled load failure. [Architecture](docs/ARCHITECTURE.md) · [Benchmark guide](docs/BENCHMARKS.md)
+The benchmark reads the original CSV files during four independent Extract → Transform → Load chains and compares sequential Python with Airflow at one and four task slots. The default 2024–2025 dataset supports 1-, 7-, 30-, 334-, and 700-day workloads. Trials measure wall time, throughput, task overlap, and recovery from a controlled load failure. [Architecture](docs/ARCHITECTURE.md) · [Benchmark guide](docs/BENCHMARKS.md)
 
 ## Install and configure
 
@@ -33,7 +33,7 @@ docker compose --profile airflow up -d --build --wait
 docker compose --profile airflow exec -T airflow-dag-processor airflow dags list-import-errors
 ```
 
-Confirm there are no DAG import errors. Open `http://localhost:8080` or the port in `AIRFLOW_UI_PORT`. Sign in as `renewflow` using `AIRFLOW_UI_PASSWORD` and confirm you can see `renewflow_daily` and `renewflow_authority_batches`. If initialization fails, inspect `docker compose --profile airflow logs --tail=80 airflow-init`.
+Confirm there are no DAG import errors. Open `http://localhost:8080` or the port in `AIRFLOW_UI_PORT`. Sign in as `renewflow` using `AIRFLOW_UI_PASSWORD` and confirm you can see `renewflow_authority_batches`. If initialization fails, inspect `docker compose --profile airflow logs --tail=80 airflow-init`.
 
 ## What to run next
 
@@ -41,7 +41,5 @@ Confirm there are no DAG import errors. Open `http://localhost:8080` or the port
 | --- | --- |
 | Collect or regenerate IEEE benchmark results | [Benchmark instructions](docs/BENCHMARKS.md) |
 | Run pytest and PostgreSQL integration checks | [Testing](docs/TESTING.md) |
-| Import CSV files, resume a PostgreSQL load, or trigger a manual DAG run | [Historical CSV replay](docs/BACKFILLS.md) |
-| Replay one day and export energy analytics | [Local demo and analytics](docs/LOCAL_DEMO.md) |
 | Review system design and remaining work | [Project specification](docs/PROJECT_SPEC.md) · [Implementation plan](docs/IMPLEMENTATION_PLAN.md) |
-| Review completed timing and recovery results | [Benchmark evidence](docs/BENCHMARK_EVIDENCE.md) |
+| Review the completed timing results | [Benchmark evidence](docs/BENCHMARK_EVIDENCE.md) |
