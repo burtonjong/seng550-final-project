@@ -1,5 +1,7 @@
 """Store validated RenewFlow observations in PostgreSQL."""
 
+import hashlib
+import json
 import os
 import re
 
@@ -68,3 +70,51 @@ def load_day(
             cursor.executemany(_UPSERT_SUBREGIONAL, _day_rows(subregional, ["respondent", "hour_start_utc", "subregion"]))
             changed_rows += cursor.rowcount
     return changed_rows
+
+
+def _digest(rows) -> str:
+    # Strip fractional padding without rounding Decimal values.
+    canonical = []
+    for respondent, hour, code, value in rows:
+        number = format(value, "f") if value else "0"
+        if "." in number:
+            number = number.rstrip("0").rstrip(".")
+        canonical.append((respondent, hour.isoformat(), code, number))
+    return hashlib.sha256(json.dumps(canonical).encode()).hexdigest()
+
+
+def publish_day(
+    connection: psycopg.Connection, observations: pd.DataFrame, *, subregional: pd.DataFrame | None = None
+) -> tuple[str, int]:
+    """Resume application loads at the last committed authority-day."""
+    authority = observations["respondent"].iat[0]
+    day = observations["hour_start_utc"].iat[0].date()
+    observation_digest = _digest(_day_rows(observations, _KEY))
+    full_digest = None
+    if subregional is not None:
+        zone_digest = _digest(_day_rows(subregional, ["respondent", "hour_start_utc", "subregion"]))
+        full_digest = observation_digest + zone_digest
+
+    with connection.transaction():
+        # Both the full import and the one-day replay take this lock.
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s), %s)", (authority, day.toordinal())
+        )
+        previous = connection.execute(
+            """SELECT observation_digest, full_digest FROM renewflow_completed_days
+               WHERE respondent = %s AND utc_date = %s""",
+            (authority, day),
+        ).fetchone()
+        if previous == (observation_digest, full_digest):
+            return "skipped", 0
+        if full_digest is None and previous and previous[0] == observation_digest:
+            return "skipped", 0
+
+        changed = load_day(connection, observations, subregional=subregional)
+        connection.execute(
+            """INSERT INTO renewflow_completed_days VALUES (%s, %s, %s, %s)
+               ON CONFLICT (respondent, utc_date) DO UPDATE
+               SET observation_digest = EXCLUDED.observation_digest, full_digest = EXCLUDED.full_digest""",
+            (authority, day, observation_digest, full_digest),
+        )
+    return ("updated" if previous else "committed"), changed

@@ -18,10 +18,13 @@ x-airflow: &airflow
     POSTGRES_DB: ${POSTGRES_DB:-renewflow}
     POSTGRES_USER: ${POSTGRES_USER:-renewflow}
     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-    EIA_API_KEY: ${EIA_API_KEY:-}
+    RENEWFLOW_STAGING_DIR: /opt/airflow/staging
+    RENEWFLOW_CSV_DIR: /opt/airflow/csv
   volumes:
     - ./dags:/opt/airflow/dags:ro
+    - ${RENEWFLOW_CSV_DIR:-./data}:/opt/airflow/csv:ro
     - ${RENEWFLOW_REPLAY_DIR:-./tests/fixtures}:/opt/airflow/replay:ro
+    - ${RENEWFLOW_STAGING_DIR:-./.renewflow/staging}:/opt/airflow/staging
     - airflow_logs:/opt/airflow/logs
     - airflow_local:/opt/airflow/local
 

@@ -1,4 +1,4 @@
-"""Compare sequential replay with manually submitted Airflow backfills."""
+"""Archived CISO benchmark helpers and sequential replay runner."""
 
 import argparse
 import hashlib
@@ -22,7 +22,7 @@ from psycopg import sql
 
 from experiments import utc_days
 from experiments.airflow import Airflow, STAGES, current_attempts
-from experiments.capture import snapshot_metadata
+from experiments.snapshot_metadata import snapshot_metadata
 from renewflow.db import BENCHMARK_DATABASE, connect_observations
 from renewflow.eia import SERIES
 from renewflow.pipeline import replay_fault
@@ -426,7 +426,7 @@ def main() -> None:
         ):
             raise ValueError("resume requires a suite, an existing source directory, and a fresh results directory")
         if args.runner in {"airflow", "suite"}:
-            args.airflow_manifest = _airflow_manifest_path(args.manifest)
+            raise ValueError("the daily Airflow comparison is archived. Run experiments.batch_benchmark instead")
         args.output_dir.mkdir(parents=True, exist_ok=True)
         _ensure_benchmark_database()
         with requests.Session() as session:

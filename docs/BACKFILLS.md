@@ -1,109 +1,47 @@
-# Backfills and scheduled ingestion
+# Historical CSV replay
 
-Run commands from the repository root. Start the [local stack](../README.md) and [apply the observation schema](LOCAL_DEMO.md#prepare-the-observation-table) before loading the regular database.
+This guide prepares JSON snapshots for application loads and the one-day demo. The [benchmark](BENCHMARKS.md) uses a metadata-only manifest and reads the original CSVs during Extract.
 
-## Run a live backfill with sequential Python
-
-With PostgreSQL running and `EIA_API_KEY` set in `.env`, pass a UTC date range. The start date is inclusive and the end date is exclusive, so this example loads January 15 only.
+Run from the repository root after [local setup](../README.md). The CSV importer expects EIA-930 Balance and Subregion files under `data/`. Keep the original files when adding another period and choose a new output directory for each input set.
 
 ```sh
-uv run --locked --env-file .env python -m renewflow.cli \
-  --start-date 2025-01-15 --end-date 2025-01-16
+uv run --locked python -m experiments.import_eia930 \
+  --input-dir data --output-dir .renewflow/csv-replay-2025 --end-date 2026-01-01
 ```
 
-The runner commits each complete day separately. If EIA returns incomplete data or the database write fails, the runner exits with an error and keeps the days it has already committed. Repeating the date range can apply revised values to rows with the same key.
+The default start is January 15, 2025. Supply `--start-date` for earlier history. The end is exclusive and defaults to the day after the last selected observation. Dates excluded during import are recorded by authority in `coverage`. Identical overlaps collapse. For a revision, use a source directory containing the replacement files and the other inputs you still want to include. Conflicting overlaps stop the import and identify the source row.
 
-## Replay a date range with sequential Python
+## Load or resume a range with sequential Python
 
-Capture the dates you want to replay, then pass the manifest and UTC range. This example replays January 15 through 21. [Capture commands](BENCHMARKS.md#capture-historical-eia-snapshots).
+Apply both schemas once, including on an existing volume, using the [local demo setup](LOCAL_DEMO.md#prepare-postgresql). This command loads January 15 through January 21. Omit both date arguments to load every available authority-day.
 
 ```sh
 uv run --locked --env-file .env python -m renewflow.cli \
-  --replay-manifest .renewflow/eia-replay/manifest.json \
+  --manifest .renewflow/csv-replay-2025/manifest.json \
   --start-date 2025-01-15 --end-date 2025-01-22
 ```
 
-## Enable the daily schedule
+Each authority-day is validated and committed independently. The summary counts committed, updated, skipped, and rejected authority-days. Dates excluded during import appear in the manifest's coverage report. A missing listed snapshot or a failed validation exits unsuccessfully. Other valid days can be committed during the same run.
 
-Set `EIA_API_KEY` in `.env` for live ingestion. If you add it after startup, rerun `docker compose --profile airflow up -d --wait` to apply the environment change. Keep PostgreSQL and the Airflow services running, and unpause `renewflow_daily` in the UI.
-
-The DAG runs daily at **19:00 UTC** (`0 19 * * *`) for the **previous completed UTC day**. For example, the scheduled run on January 16 at 19:00 UTC processes January 15 from `00:00` through `23:00` UTC. In the Grid, open the scheduled run and check `utc_date` in the task's `renewflow_event` log to confirm the observation date. Automatic catchup is disabled. To fill a missed range, use the manual backfill below.
-
-## Choose a manual Airflow run
-
-Both procedures use `renewflow_daily`. Use the Airflow web UI's Grid to monitor runs and inspect task attempts.
-
-| Goal | How to submit it |
-| --- | --- |
-| Check a known day or demonstrate a retry | Use **Single Run** in the web UI and supply an explicit UTC `observation_date`. [One-day replay](#trigger-a-one-day-replay-manually) |
-| Fill or replay a range of historical days | Use `airflow backfill create` to preview the logical dates and submit one run per day. [Date-range backfill](#trigger-a-date-range-backfill-manually-in-airflow) |
+After interruption, repeat the command. PostgreSQL skips matching completed days and writes changed or uncommitted days. For new periods, add the files, import to a fresh output directory, and pass its manifest to the loader. The loader revalidates selected snapshots on each invocation. An updated manifest can change previously stored values through the same primary keys.
 
 ## Trigger a one-day replay manually
 
-For a manual **Single Run**, set `observation_date` in **Configuration JSON** to select one completed UTC day. For `2025-01-15`, RenewFlow loads the 24 hourly observations per series from January 15 at `00:00 UTC` up to January 16 at `00:00 UTC`, exclusive. Leave **Data Interval** on **Auto** and **Logical Date** at its default. Scheduled runs and native date-range backfills derive the observation date from the end of Airflow’s data interval.
+Set `RENEWFLOW_REPLAY_DIR=./.renewflow/csv-replay-2025` in `.env` and restart the Airflow profile to apply the mount.
 
-1. In the Airflow web UI, open `renewflow_daily`, unpause it, and click **Trigger** to open the dialog.
-2. Select **Single Run**, expand **Advanced Options**, and paste the JSON for your chosen data source below into **Configuration JSON**. [Airflow 3.3.2 run configuration](https://github.com/apache/airflow/blob/3.3.2/airflow-core/docs/core-concepts/dag-run.rst#passing-parameters-when-triggering-dags)
-3. Click **Trigger** in the dialog.
+```sh
+docker compose --profile airflow up -d --build --wait
+```
 
-### Replay saved EIA data
-
-`replay_manifest` names a file that maps UTC dates to previously fetched EIA snapshots. Airflow looks for the manifest under `RENEWFLOW_REPLAY_DIR`. Use `RENEWFLOW_REPLAY_DIR=./tests/fixtures` in `.env` for the bundled snapshot. If you changed the setting, run `docker compose --profile airflow up -d --wait` to refresh the mount.
+Open **renewflow_daily**, unpause it, and select **Trigger → Single Run**. Set **Configuration JSON** to the following and leave **Data Interval** on **Auto**.
 
 ```json
 {
   "observation_date": "2025-01-15",
-  "replay_manifest": "replay-manifest.json"
+  "replay_manifest": "CISO/manifest.json"
 }
 ```
 
-In the Grid, open the manually triggered run and confirm that `extract_solar`, `extract_wind`, and `extract_demand` succeed before `load_day`. Confirm 72 observations for January 15. An identical rerun reports zero changed rows. [Row-count query](LOCAL_DEMO.md#verify-the-stored-observations)
+`observation_date` selects a completed UTC day of EIA observations. The Airflow Data Interval field does not select the dataset. The manifest path is relative to the mounted replay directory and tells the DAG which local snapshot to open. The three CISO authority-wide series publish to the application database together. For a retry demonstration, add `"fail_first": "2025-01-15:wind"` to the JSON. The first wind attempt fails deliberately, retries, and allows the load to proceed after it succeeds.
 
-### Fetch a day directly from EIA
-
-With only `observation_date` in the JSON, RenewFlow queries EIA for that day and loads the results into local PostgreSQL. Set `EIA_API_KEY` in `.env`. If you added the key after startup, run `docker compose --profile airflow up -d --wait` to apply it.
-
-```json
-{
-  "observation_date": "2025-01-15"
-}
-```
-
-### Demonstrate an automatic retry
-
-Trigger a new **Single Run** the same way and use this JSON. The `fail_first` setting causes the first wind attempt to fail. Airflow then retries wind automatically and keeps the successful solar and demand results.
-
-```json
-{
-  "observation_date": "2025-01-15",
-  "replay_manifest": "replay-manifest.json",
-  "fail_first": "2025-01-15:wind"
-}
-```
-
-In the Grid, open `extract_wind` and inspect the logs for both attempts. Expect the first attempt to fail, the second to succeed, and the day's 72 observations to be present after `load_day` succeeds.
-
-To show the same controlled fault on the sequential baseline, use `--fail-first`:
-
-```sh
-uv run --locked --env-file .env python -m renewflow.cli \
-  --replay-manifest tests/fixtures/replay-manifest.json --fail-first 2025-01-15:wind
-```
-
-## Trigger a date-range backfill manually in Airflow
-
-For this seven-day example, capture the rehearsal range and set `RENEWFLOW_REPLAY_DIR=./.renewflow/eia-replay` in `.env`. The manifest must list all seven dates. The sequential CLI can replay the manifest in date order or select a subrange with `--start-date` and `--end-date`. [Capture commands](BENCHMARKS.md#capture-historical-eia-snapshots)
-
-Airflow's backfill CLI takes **inclusive logical-date bounds**. Each day's logical date is that date at `19:00 UTC`, so the command below covers January 15 through 21. The equivalent Python and benchmark range uses `--start-date 2025-01-15 --end-date 2025-01-22`, with an exclusive end date. First check that the Airflow dry run lists all seven logical dates. [Airflow 3.3.2 backfills](https://airflow.apache.org/docs/apache-airflow/3.3.2/core-concepts/backfill.html)
-
-```sh
-docker compose --profile airflow exec -T airflow-scheduler \
-  airflow backfill create --dag-id renewflow_daily \
-  --from-date 2025-01-15T19:00:00+00:00 --to-date 2025-01-21T19:00:00+00:00 \
-  --max-active-runs 1 --reprocess-behavior completed --dry-run \
-  --dag-run-conf '{"replay_manifest":"manifest.json"}'
-```
-
-After verifying the dates and manifest paths, repeat the command with `--dry-run` removed to submit it. Look for seven daily runs in the Grid. For a live EIA backfill, set the API key and omit the `--dag-run-conf` line and the preceding line's trailing backslash. Use the [benchmark runner](BENCHMARKS.md) for paper measurements.
-
-To keep PostgreSQL running for the Python baseline, stop the Airflow services with `docker compose --profile airflow stop airflow-scheduler airflow-dag-processor airflow-api`. To stop the full stack while retaining its volumes, run `docker compose --profile airflow stop`.
+Use the [staged benchmark harness](BENCHMARKS.md) for historical Airflow ranges and paper measurements. It submits one `renewflow_authority_batches` DAG run per trial and selects the same manifest dates as the Python runner.

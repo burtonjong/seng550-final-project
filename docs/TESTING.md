@@ -2,6 +2,14 @@
 
 Run commands from the repository root after [project setup](../README.md).
 
+## Unit checks
+
+```sh
+uv run --locked pytest -m "not postgres"
+```
+
+The tests exercise CSV extension and overlaps, coverage gaps, UTC boundaries, replay, and staged recovery. Small fixtures supply deterministic input. The DAG structure check runs when the Airflow SDK is installed.
+
 ## PostgreSQL integration tests
 
 Start local PostgreSQL through Compose and create the test database once. Configure `POSTGRES_PASSWORD` in `.env` first. [Local setup](../README.md#install-and-configure)
@@ -18,22 +26,4 @@ Set `RENEWFLOW_TEST_DATABASE_URL` in the same `.env`. The default host port is `
 uv run --locked --env-file .env pytest -m postgres
 ```
 
-These tests use isolated schemas in `renewflow_test` to check reruns, revisions, rollback, and SQL analytics. To run the full pytest suite, use `uv run --locked --env-file .env pytest`.
-
-## Run a live EIA check
-
-This optional check needs a network connection to `api.eia.gov` and an [EIA API key](https://www.eia.gov/opendata/register.php). Set `EIA_API_KEY` in your ignored `.env` file.
-
-```sh
-uv run --locked --env-file .env python -m renewflow.eia --date 2025-01-15
-```
-
-`--env-file .env` loads the key, and `--date` selects the UTC operating day. The check requests all three series and reports counts, first and last EIA timestamps, and units. For this date, each series should show 24 hour endings from `2025-01-15T01` through `2025-01-16T00` and units of megawatthours.
-
-The final lines confirm the total number of observations and tell you whether the output was a terminal summary or a saved JSON file. To save a fresh sanitized capture, use `--snapshot` with a new path. `mktemp -d` creates a temporary directory so the command can be repeated without replacing an existing fixture.
-
-```sh
-snapshot_dir=$(mktemp -d)
-uv run --locked --env-file .env python -m renewflow.eia --date 2025-01-15 \
-  --snapshot "$snapshot_dir/eia-ciso-2025-01-15.json"
-```
+These tests use isolated schemas in `renewflow_test` to check reruns, revisions, checkpoint rollback, and SQL analytics. To run the full pytest suite, use `uv run --locked --env-file .env pytest`.

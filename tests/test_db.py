@@ -207,3 +207,33 @@ def test_seasonal_profile_counts_only_complete_utc_days(analytics_connection, ob
     )
     assert [row[2] for row in profile] == list(range(24))
     assert {row[3] for row in profile} == {2}
+
+
+@pytest.mark.postgres
+def test_incremental_checkpoint_tracks_revisions_and_rolls_back_with_rows(pg_connection, observations):
+    from renewflow.db import publish_day
+
+    pg_connection.execute((SQL_DIR / "subregional_demand.sql").read_text())
+    zones = observations.loc[
+        observations["metric"] == "demand", ["respondent", "hour_start_utc"]
+    ].assign(subregion="PGAE", value_mwh=Decimal("1"))
+    # Existing application rows predate the checkpoint.
+    assert load_day(pg_connection, observations) == 72
+    assert publish_day(pg_connection, observations, subregional=zones) == ("committed", 24)
+    assert publish_day(pg_connection, observations) == ("skipped", 0)
+    assert publish_day(pg_connection, observations, subregional=zones) == ("skipped", 0)
+
+    next_day = observations.assign(hour_start_utc=observations["hour_start_utc"] + pd.Timedelta(days=1))
+    bad_zones = zones.assign(hour_start_utc=zones["hour_start_utc"] + pd.Timedelta(days=1), value_mwh=Decimal("-1"))
+    with pytest.raises(psycopg.errors.CheckViolation):
+        publish_day(pg_connection, next_day, subregional=bad_zones)
+    assert len(_stored_rows(pg_connection)) == 72
+    assert pg_connection.execute("SELECT count(*) FROM renewflow_completed_days").fetchone() == (1,)
+    assert publish_day(pg_connection, next_day, subregional=bad_zones.assign(value_mwh=Decimal("1"))) == ("committed", 96)
+
+    revised = observations.copy()
+    revised.loc[0, "value_mwh"] = Decimal("123.000")
+    assert publish_day(pg_connection, revised) == ("updated", 1)
+    assert publish_day(pg_connection, observations, subregional=zones) == ("updated", 1)
+    assert publish_day(pg_connection, observations, subregional=zones) == ("skipped", 0)
+    assert len(_stored_rows(pg_connection)) == 144

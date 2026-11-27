@@ -68,7 +68,7 @@ def normalize_series(
     """Return 24 unique, sorted hourly observations or raise ValidationError."""
     if metric not in SERIES:
         raise ValueError("metric must be solar, wind, or demand")
-    _, facet, code = SERIES[metric]
+    facet, code = SERIES[metric]
     context = f"{utc_date} {respondent} {metric}"
 
     invalid_records = sum(not isinstance(row, dict) for row in rows)

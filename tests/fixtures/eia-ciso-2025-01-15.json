@@ -4,12 +4,6 @@
   "frequency": "hourly",
   "series": {
     "solar": {
-      "route": "electricity/rto/fuel-type-data/data/",
-      "facets": {
-        "respondent": "CISO",
-        "fueltype": "SUN"
-      },
-      "apiVersion": "2.1.14",
       "response": {
         "total": 24,
         "data": [
@@ -185,12 +179,6 @@
       }
     },
     "wind": {
-      "route": "electricity/rto/fuel-type-data/data/",
-      "facets": {
-        "respondent": "CISO",
-        "fueltype": "WND"
-      },
-      "apiVersion": "2.1.14",
       "response": {
         "total": 24,
         "data": [
@@ -366,12 +354,6 @@
       }
     },
     "demand": {
-      "route": "electricity/rto/region-data/data/",
-      "facets": {
-        "respondent": "CISO",
-        "type": "D"
-      },
-      "apiVersion": "2.1.14",
       "response": {
         "total": 24,
         "data": [

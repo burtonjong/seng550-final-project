@@ -7,6 +7,8 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import median
 
+from experiments import CSV_EXPERIMENT, STAGED_EXPERIMENT, input_identity
+
 
 def summarize(trials: list[dict]) -> tuple[list[dict], list[dict]]:
     timings = defaultdict(list)
@@ -15,7 +17,8 @@ def summarize(trials: list[dict]) -> tuple[list[dict], list[dict]]:
     experiments = {result.get("experiment") for result in trials if "trial_id" in result}
     if len(experiments) > 1:
         raise ValueError("report each experiment from its own results directory")
-    subregional = experiments == {"authority_batches_subregions"}
+    staged = experiments in ({STAGED_EXPERIMENT}, {CSV_EXPERIMENT})
+    subregional = staged or experiments == {"authority_batches_subregions"}
     for result in trials:
         if "trial_id" not in result:
             continue
@@ -31,18 +34,21 @@ def summarize(trials: list[dict]) -> tuple[list[dict], list[dict]]:
             "recovery_seconds": metrics.get("recovery_seconds"),
             "recovery_repeated_stages": metrics.get("recovery_repeated_stages"),
             "recovery_required_operator": metrics.get("recovery_required_operator"),
+            **({
+                "recovery_repeated_days": metrics.get("recovery_repeated_days"),
+                "recovery_repeated_rows": metrics.get("recovery_repeated_rows"),
+            } if staged else {}),
         })
         if result["outcome"] != "success":
             continue
         cohort = (result["start_date"], result["end_date"], result["days"])
-        captures = result["input"]["captures"]
         evidence = (
-            tuple(sorted((day, capture["sha256"]) for day, capture in captures.items())),
+            input_identity(result["input"]),
             *(result["output"][key] for key in ("observation_sha256", "hourly_sha256", "daily_sha256")),
             *((result["output"]["subregional_sha256"], result["output"]["daily_subregional_sha256"]) if subregional else ()),
         )
         if outputs.setdefault(cohort, evidence) != evidence:
-            raise ValueError(f"snapshots or SQL outputs differ for cohort starting {cohort[0]}")
+            raise ValueError(f"inputs or SQL outputs differ for cohort starting {cohort[0]}")
         if not result["fault"]:
             timings[(*cohort, result["runner"], result["slots"])].append(result)
 
@@ -53,8 +59,14 @@ def summarize(trials: list[dict]) -> tuple[list[dict], list[dict]]:
         summary.append({
             "start_date": start, "end_date": end, "days": days, "runner": runner, "slots": slots,
             "observations": runs[0]["output"]["observations"], "input_bytes": runs[0]["input"]["input_bytes"],
+            **({"distinct_csv_bytes": runs[0]["input"]["distinct_csv_bytes"]} if experiments == {CSV_EXPERIMENT} else {}),
             **({"observations_per_task": runs[0]["observations_per_task"]} if experiments == {"authority_batches"} else {}),
             **({"subregional_observations": runs[0]["output"]["subregional_observations"]} if subregional else {}),
+            **({
+                "first_stage_delay_seconds_median": median(run["metrics"]["first_stage_delay_seconds"] for run in runs),
+                "peak_concurrent_stages_median": median(run["metrics"]["peak_concurrent_stages"] for run in runs),
+                "stage_overlap_seconds_median": median(run["metrics"]["stage_overlap_seconds"] for run in runs),
+            } if staged else {}),
             "trials": len(runs), "wall_seconds_median": median(runtime), "wall_seconds_min": min(runtime),
             "wall_seconds_max": max(runtime), "rows_per_second_median": median(throughput),
             "rows_per_second_min": min(throughput), "rows_per_second_max": max(throughput),
@@ -68,6 +80,28 @@ def write_csv(path: Path, rows: list[dict]) -> None:
             writer = csv.DictWriter(output, fieldnames=rows[0].keys())
             writer.writeheader()
             writer.writerows(rows)
+
+
+def comparisons(summary: list[dict]) -> list[dict]:
+    workloads = defaultdict(dict)
+    for row in summary:
+        workloads[row["start_date"], row["end_date"]][row["runner"], row["slots"]] = row
+    rows = []
+    for (start, end), configs in sorted(workloads.items()):
+        if not {("python", 1), ("airflow", 1), ("airflow", 4)} <= configs.keys():
+            continue
+        python = configs["python", 1]["wall_seconds_median"]
+        airflow_one = configs["airflow", 1]["wall_seconds_median"]
+        airflow_four = configs["airflow", 4]["wall_seconds_median"]
+        rows.append({
+            "start_date": start, "end_date": end, "days": configs["python", 1]["days"],
+            "observations": configs["python", 1]["observations"],
+            "airflow_four_vs_one_speedup": airflow_one / airflow_four,
+            "airflow_four_vs_python_speedup": python / airflow_four,
+            "airflow_four_minus_python_seconds": airflow_four - python,
+            "airflow_four_faster_than_python": airflow_four < python,
+        })
+    return rows
 
 
 def plot(path: Path, summary: list[dict]) -> None:
@@ -123,13 +157,25 @@ def main() -> None:
         if not reliability:
             raise ValueError("no benchmark trials found")
         write_csv(args.results_dir / "reliability.csv", reliability)
+        staged = any(trial.get("experiment") in (STAGED_EXPERIMENT, CSV_EXPERIMENT) for trial in trials)
+        csv_trial = any(trial.get("experiment") == CSV_EXPERIMENT for trial in trials)
+        if staged:
+            write_csv(args.results_dir / "recovery.csv", [row for row in reliability if row["fault"]])
+            write_csv(args.results_dir / "comparison.csv", comparisons(summary))
         tasks = [
             {
                 "trial_id": trial["trial_id"], "runner": trial["runner"], "slots": trial["slots"],
-                "days": trial["days"], "authority": event["authority"], "observations": event["expected_observations"],
+                "days": trial["days"], "authority": event["authority"], "observations": event.get("expected_observations"),
                 "status": event["status"], "duration_seconds": event.get("duration_seconds"),
+                **({
+                    "fault": trial["fault"], "stage": event["stage"], "attempt": event["attempt"],
+                    "started_at": event["started_at"], "finished_at": event["finished_at"],
+                    "rows_processed": event["rows_processed"], "rows_changed": event.get("rows_changed"),
+                    "days_committed": event.get("days_committed"),
+                } if staged else {}),
+                **({"csv_bytes_scanned": event.get("csv_bytes_scanned")} if csv_trial else {}),
             }
-            for trial in trials if trial.get("experiment") == "authority_batches_subregions"
+            for trial in trials if trial.get("experiment") in (STAGED_EXPERIMENT, CSV_EXPERIMENT, "authority_batches_subregions")
             for event in trial.get("events", []) if "authority" in event
         ]
         write_csv(args.results_dir / "task_timings.csv", tasks)

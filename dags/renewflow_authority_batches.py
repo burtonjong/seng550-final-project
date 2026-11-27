@@ -1,44 +1,48 @@
-"""Run four independent EIA authority batches against a benchmark schema."""
+"""Run four extract, transform, and load chains against a benchmark schema."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import psycopg
 from airflow.sdk import dag, get_current_context, task
 from airflow.sdk.exceptions import AirflowFailException
 
-from renewflow.batch import BATCH_DAG, BATCH_TASKS
+from renewflow.batch import (
+    AUTHORITY_COUNT, BATCH_DAG, LOAD_RETRIES, LOAD_RETRY_DELAY, authority_batch, execute_stage, read_batch_replay,
+)
+from renewflow.replay import replay_path
 
 log = logging.getLogger(__name__)
 
 
-@task(retries=0, do_xcom_push=False)
-def process_authority(index: int) -> None:
-    import psycopg
-
-    from renewflow.batch import load_authority_batch, read_batch_replay
-    from renewflow.pipeline import record_attempt
-    from renewflow.replay import replay_path
-
+def _run_stage(index: int, stage: str, source: str | None):
     context = get_current_context()
-    run = context["dag_run"]
-    conf = run.conf or {}
+    conf = context["dag_run"].conf or {}
     try:
-        with record_attempt(
-            log.info, runner="airflow", run_id=run.run_id, stage=BATCH_TASKS[index],
-            attempt=context["ti"].try_number,
-        ) as counts:
-            replay = read_batch_replay(replay_path(Path("/opt/airflow/replay"), conf["replay_manifest"]))
-            days = conf["days"]
-            if days not in replay.cohorts:
-                raise ValueError("requested days are outside the captured cohorts")
-            authority, manifest = tuple(replay.manifests.items())[index]
-            counts.update(load_authority_batch(
-                manifest, authority, days, schema=conf["benchmark_schema"],
-                subregions=replay.subregions.get(authority, ()),
-            ))
+        replay = read_batch_replay(replay_path(Path("/opt/airflow/replay"), conf["replay_manifest"]))
+        batch = authority_batch(
+            replay, index, conf["days"], conf["benchmark_schema"], conf.get("inject_load_failure", False),
+        )
+        return execute_stage(batch, stage, source, runner="airflow", attempt=context["ti"].try_number, emit=log.info)
     except (KeyError, OSError, TypeError, ValueError, psycopg.Error) as error:
-        raise AirflowFailException(f"Authority batch failed ({type(error).__name__})") from None
+        detail = str(error) if isinstance(error, ValueError) and not isinstance(error, psycopg.Error) else type(error).__name__
+        raise AirflowFailException(f"{stage} failed: {detail}") from None
+
+
+@task(retries=0)
+def extract(index: int) -> str:
+    return _run_stage(index, "extract", None)
+
+
+@task(retries=0)
+def transform(index: int, source: str) -> str:
+    return _run_stage(index, "transform", source)
+
+
+@task(retries=LOAD_RETRIES, retry_delay=timedelta(seconds=LOAD_RETRY_DELAY), do_xcom_push=False)
+def load(index: int, source: str) -> None:
+    _run_stage(index, "load", source)
 
 
 @dag(
@@ -46,8 +50,10 @@ def process_authority(index: int) -> None:
     catchup=False, max_active_runs=1, tags=["renewflow", "benchmark"],
 )
 def authority_batches() -> None:
-    for index, task_id in enumerate(BATCH_TASKS):
-        process_authority.override(task_id=task_id)(index)
+    for index in range(AUTHORITY_COUNT):
+        raw = extract.override(task_id=f"extract_authority_{index}")(index)
+        normalized = transform.override(task_id=f"transform_authority_{index}")(index, raw)
+        load.override(task_id=f"load_authority_{index}")(index, normalized)
 
 
-authority_batches()
+dag_instance = authority_batches()

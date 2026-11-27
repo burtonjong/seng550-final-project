@@ -8,10 +8,10 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from experiments import benchmark
+from experiments import batch_benchmark, benchmark
 from experiments.airflow import Airflow, STAGES
 from experiments.benchmark import attempt_metrics, prepare_input
-from experiments.capture import snapshot_metadata
+from experiments.snapshot_metadata import snapshot_metadata
 from experiments.report import summarize
 from renewflow.db import connect_observations
 
@@ -22,14 +22,14 @@ def test_suite_rejects_a_manifest_outside_the_airflow_mount_before_creating_tria
     monkeypatch.delenv("POSTGRES_HOST", raising=False)
     monkeypatch.setenv("RENEWFLOW_REPLAY_DIR", str(tmp_path))
     monkeypatch.setattr(sys, "argv", [
-        "benchmark", "--runner", "suite", "--start-date", "2025-01-15", "--end-date", "2025-01-16",
+        "batch_benchmark",
         "--manifest", str(MANIFEST), "--output-dir", str(tmp_path / "results"),
     ])
     prepare_database = Mock(side_effect=AssertionError("database setup started before checking the mount"))
-    monkeypatch.setattr(benchmark, "_ensure_benchmark_database", prepare_database)
+    monkeypatch.setattr(batch_benchmark, "_ensure_benchmark_database", prepare_database)
 
     with pytest.raises(SystemExit) as error:
-        benchmark.main()
+        batch_benchmark.main()
 
     assert error.value.code == 1
     assert f"RENEWFLOW_REPLAY_DIR={MANIFEST.parent}" in capsys.readouterr().err
@@ -219,5 +219,5 @@ def test_report_uses_clean_trials_for_timing_and_checks_output_equivalence():
     assert timing[0]["trials"] == 2
     assert timing[0]["wall_seconds_median"] == 3
     trials[-1]["output"]["daily_sha256"] = "changed"
-    with pytest.raises(ValueError, match="snapshots or SQL outputs differ"):
+    with pytest.raises(ValueError, match="inputs or SQL outputs differ"):
         summarize(trials)

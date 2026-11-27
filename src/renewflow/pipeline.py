@@ -3,27 +3,28 @@
 import json
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from time import perf_counter
 
-from renewflow.eia import SERIES, RetryableEIAError
+from renewflow.eia import SERIES
 
 EXTRACT_RETRIES = 2
 RETRY_DELAY_SECONDS = 5
 
 
-def observation_date(run_type: str, interval_end: datetime | None, override: str | None) -> date:
-    """Map a scheduled/backfill interval or manual date to one UTC operating day."""
-    if run_type == "manual":
-        if not isinstance(override, str):
-            raise ValueError("manual runs require observation_date in YYYY-MM-DD format")
-        day = date.fromisoformat(override)
-        if override != day.isoformat() or day >= datetime.now(UTC).date():
-            raise ValueError("observation_date must be a completed UTC date in YYYY-MM-DD format")
-        return day
-    if override is not None or interval_end is None or interval_end.utcoffset() is None:
-        raise ValueError("scheduled runs and backfills require their own UTC data interval")
-    return interval_end.astimezone(UTC).date() - timedelta(days=1)
+class InjectedExtractFailure(RuntimeError):
+    """A transient fault injected during a replay demonstration."""
+
+
+def observation_date(value: str | None) -> date:
+    """Select an explicit completed UTC operating day."""
+    try:
+        day = date.fromisoformat(value)
+        if value != day.isoformat() or day >= datetime.now(UTC).date():
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("observation_date must be a completed UTC date in YYYY-MM-DD format") from None
+    return day
 
 
 def replay_fault(value: str | None, *, replay: bool) -> tuple[date, str] | None:
@@ -45,7 +46,7 @@ def fail_on_first_attempt(
     fault: tuple[date, str] | None, day: date, metric: str, attempt: int
 ) -> None:
     if fault == (day, metric) and attempt == 1:
-        raise RetryableEIAError("Injected transient extract failure for replay")
+        raise InjectedExtractFailure("Injected transient extract failure for replay")
 
 
 @contextmanager

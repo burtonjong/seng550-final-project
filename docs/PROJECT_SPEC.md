@@ -2,45 +2,33 @@
 
 ## Objective and scope
 
-RenewFlow is a SENG 550 project that collects hourly solar generation, wind generation, and demand for the California ISO balancing authority (`CISO`), publishes validated data to PostgreSQL, and evaluates Airflow against a sequential Python baseline. The primary research question is how Airflow orchestration affects execution time, task reliability, failure recovery, and processing scalability as the historical backfill grows. The energy summaries show what the pipeline produces and help verify that both runners publish equivalent results.
+RenewFlow evaluates how Airflow orchestration affects execution time, task reliability, failure recovery, and scalability relative to sequential Python. Both runners process identical historical EIA-930 observations and publish validated data to PostgreSQL. SQL summaries demonstrate the pipeline output and help verify equality.
 
-The submission target is a repeatable local system using Docker Compose, Airflow 3.x, Python, Requests, Pandas, PostgreSQL, psycopg, and pytest. SQL summaries and local figures provide the analytics evidence. Grafana Cloud and Private Data Source Connect, and a potential always-on EC2 deployment, are optional follow-up work. The local demo fetches a historical day directly from EIA with an API key. Live scheduled ingestion also requires a running local stack and an unpaused DAG. [Local demo](LOCAL_DEMO.md) · [Daily schedule setup](BACKFILLS.md#enable-the-daily-schedule)
+The local submission uses Docker Compose, Airflow 3.x, Python, Pandas, PostgreSQL, psycopg, and pytest. Grafana Cloud, Private Data Source Connect, and EC2 deployment are optional follow-up work. [Architecture](ARCHITECTURE.md)
 
 ## Inputs and data characteristics
 
-| Series | EIA API v2 data route | Filters in addition to `respondent=CISO` |
-| --- | --- | --- |
-| Solar net generation | `electricity/rto/fuel-type-data/data/` | `fueltype=SUN` |
-| Wind net generation | `electricity/rto/fuel-type-data/data/` | `fueltype=WND` |
-| Actual demand | `electricity/rto/region-data/data/` | `type=D` |
+| File | Fields used |
+| --- | --- |
+| EIA-930 Balance | Authority code, UTC end of hour, reported demand, reported solar and wind net generation without integrated storage |
+| EIA-930 Subregion | Authority code, string load-zone code, UTC end of hour, reported demand |
 
-Request the `value` column and the `hourly` frequency. Verify the offset-free `period` field's UTC interpretation, hour-ending behavior, response units, and API date bounds on both routes before finalizing the parser. Use stable sorting and honor pagination metadata so truncated results are detectable. Record the route, facets, capture time, and API version in snapshot provenance. [EIA API v2 technical documentation](https://www.eia.gov/opendata/documentation/APIv2.1.0.pdf)
-
-Experiment 2 also captures hourly actual demand from `electricity/rto/region-sub-ba-data/data/`, filtering by `parent` authority and retaining the `subba` code. This data supports load-zone totals and peaks. Authority-wide energy summaries continue to use solar, wind, and authority-wide demand. [EIA-930 demand definitions](https://www.eia.gov/electricity/930-content/about.html)
+Over a one-hour interval, hourly average MW is numerically equal to MWh. Preserve reported values and signed solar or wind net generation. A nonzero integrated-storage contribution triggers an import error so its effect can be reviewed before changing the generation series definition. [EIA-930 methodology and data downloads](https://www.eia.gov/electricity/930-content/about.html)
 
 | Dimension | Implication for RenewFlow |
 | --- | --- |
-| Volume | Three series yield up to 72 observations per complete CISO UTC day, or 26,280 per 365-day year. The experiment scales by replaying more real historical days and reports the actual rows and bytes processed. |
-| Velocity | Observations are hourly and the pipeline runs daily. EIA publishes demand and generation on different timelines, so check all three series for completeness at load time. |
-| Variety | EIA generation, authority operations, and subregional demand use different identifiers in their JSON responses. Normalize them into relational records that preserve the difference between authority and zone. |
-| Veracity | Late reports, revisions, anomalies, and daylight-saving reporting defects can affect coverage and values. Check the expected UTC slots and quantify defects in the selected history. |
-| Value | Hourly alignment supports investigation of demand peaks and the contribution of solar and wind across the day. Attempt-level records support investigation of delays, failures, and recovery. |
+| Volume | The four source files hold more than 1.25 million rows. The largest verified cohort processes 384,768 observations after filtering to selected authorities, zones, and complete UTC days. |
+| Velocity | Observations are hourly. Historical files support repeatable manual replay and extensions as new file periods arrive. |
+| Variety | Balance and Subregion have different schemas and identifiers. UTC normalization aligns their time axis while retaining authority and zone keys. |
+| Veracity | Missing observations, revisions, conflicting duplicates, and local reporting anomalies affect coverage. The manifest records the source hashes and the excluded dates with reasons. |
+| Value | Hourly matching supports analysis of renewable generation, demand peaks, and zone-level demand. Stage telemetry shows where orchestration time and retry work occur. |
 
-EIA publishes observations using the hour-ending convention and documents reporting delays and revisions. Profile missing, duplicate, and anomalous values on the historical snapshot and retain the counts used to explain analytical coverage. [EIA-930 methodology and data quality notes](https://www.eia.gov/electricity/930-content/about.html)
+## UTC replay and publication contract
 
-## Scheduling and publication contract
-
-- Schedule one Airflow run per day at **19:00 UTC**. Derive the target date from the run's scheduled time, including when it starts late or is retried. A run scheduled on November 18 at 19:00 UTC covers the operating hours in `[November 17 00:00, November 18 00:00)` UTC.
-- Normalize to `hour_start_utc`. Under the source hour-ending convention, the example window needs EIA hour endings from November 17 01:00 through November 18 00:00 inclusive. Verify that the request and parser together select those exact 24 intervals, including the final hour ending at midnight. UTC windows always have 24 expected slots, including dates with local clock changes.
-- Accept explicit UTC dates for historical reruns. Define date ranges as inclusive start and exclusive end, and split the range into daily work units. The Airflow and sequential entry points must resolve the same set of dates.
-- Give solar, wind, and demand independent extraction tasks. Reuse a common fetch function and per-series validation in both runners. Join the three outputs before publication so a launch, retry, or backfill produces a complete daily batch.
-
-## Quality and persistence
-
-- Check response schema, series identifiers, units, hourly timestamp alignment, and bounds. Reject missing, nonnumeric, or nonfinite values and nonpositive CISO demand. Preserve signed net generation and count the hours with negative readings for review. The captured CISO fixture contained 14 negative solar readings in 24 hours. Profile the frequency and size of signed values over the historical benchmark window.
-- Collapse duplicates with the same hour and equivalent numeric value. Count the duplicates and fail validation for conflicting values at the same hour, mismatched records, or missing expected hours. Surface the date, series, and counts so operators can retry or backfill. Publish only complete days and keep any previously published batch if an attempted refresh fails.
-- Store long-form observations keyed by `(respondent, hour_start_utc, metric)` with `timestamptz` and numeric `value_mwh`. Publish all three series in one PostgreSQL transaction using a unique key and `INSERT ... ON CONFLICT DO UPDATE`. An identical replay preserves rows and values. A successful live refresh can replace revised values. Benchmark replay writes to a separate target. [PostgreSQL `INSERT` reference](https://www.postgresql.org/docs/current/sql-insert.html)
-- Store Experiment 2 load-zone demand in a separate table keyed by `(respondent, hour_start_utc, subregion)`. Allow zero demand, reject negative values, and require 24 distinct UTC hours for each selected zone-day. Commit the authority-wide and subregional rows for one authority-day together.
+- The observation interval begins at 00:00 UTC and ends at midnight at the start of the next date. The input hour ending at that midnight belongs to the preceding UTC day. Normalize to `hour_start_utc` by subtracting one hour.
+- The preparation command identifies candidate days, validates their coverage, and records the exact shared benchmark dates without generating benchmark snapshots. Benchmark Extract, Transform, and Load use the same ordered dates, even across gaps. The one-day demo accepts a manual observation date and a replay manifest.
+- Transform checks all expected timestamps, series and zone identifiers, units, finite numeric values, and duplicates. Authority demand must be positive. Zone demand can be zero. Collapse identical duplicates and reject conflicting values and incomplete days.
+- Store observations with keys `(respondent, hour_start_utc, metric)` and `(respondent, hour_start_utc, subregion)`. Transactional upserts apply changed values. Application loads skip an authority-day whose validated content matches the committed checkpoint. Benchmark trials use fresh schemas and run the full write path. [Application setup and replay](BACKFILLS.md)
 
 ## Analytics and monitoring
 
@@ -50,8 +38,8 @@ EIA publishes observations using the hour-ending convention and documents report
 
 ## Experimental acceptance
 
-**Experiment 1** compares the overhead and concurrency of daily jobs. The sequential Python baseline processes one CISO day at a time. The native Airflow backfill schedules one run per day with three per-series extraction and validation stages and a daily load. The comparison uses nested 1-, 7-, and 30-day workloads, with 365 and 730 days where coverage and time permit. The controlled fault trials test wind extraction recovery. The 19:00 UTC schedule supports ongoing ingestion.
+One experiment compares sequential Python with Airflow at one and four task slots. Four authority chains each use a separate extract, transform, and load task across the 1-, 7-, 30-, and 334-day workloads selected from the 2025 CSVs. Both runners scan the same original EIA files once per authority inside the timed Extract stages. They use the same intermediate files and database operations. Record task overlap, end-to-end wall time, and verified rows per second. Test whether four-slot Airflow overtakes Python as each task gets more rows.
 
-**Experiment 2** compares larger ETL workloads at a fixed task count. Four authority batches process solar, wind, authority-wide demand, and hourly load-zone demand across 7, 30, 90, and 365 days where verified coverage permits. Sequential Python runs one authority at a time. A manual Airflow DAG runs the same four tasks with one or four task slots. Compare wall time, throughput, and per-authority durations. The two experiments use fixed captures from the EIA API so the measured workloads are reproducible.
+In separate recovery trials, fail CISO’s load immediately after three UTC days commit. Both runners automatically retry once using staged transformed data and idempotent writes. Measure recovery time, repeated work, first-attempt success, and operator intervention. Verify all SQL outputs against clean runs. [Benchmark guide](BENCHMARKS.md)
 
 Evaluate execution time, task reliability, failure recovery, and processing scalability. Require output equivalence and transactional integrity before interpreting speed. Discuss source-quality exclusions, scheduling overhead, and the scope of single-host task parallelism. The [experiment protocol](IMPLEMENTATION_PLAN.md#experiment-protocol) defines the controls, metrics, and evidence needed for the IEEE report.

@@ -1,17 +1,17 @@
-"""Fetch, validate, and publish one complete CISO operating day."""
+"""Replay, validate, and publish one complete CISO operating day."""
 
 import logging
-import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from airflow.exceptions import AirflowFailException
-from airflow.sdk import CronDataIntervalTimetable, dag, get_current_context, task
+from airflow.sdk import dag, get_current_context, task
+from airflow.sdk.exceptions import AirflowFailException
 
-from renewflow.eia import RESPONDENT, EIAError, RetryableEIAError, fetch_series
+from renewflow.eia import RESPONDENT
 from renewflow.pipeline import (
     EXTRACT_RETRIES,
+    InjectedExtractFailure,
     RETRY_DELAY_SECONDS,
     fail_on_first_attempt,
     observation_date,
@@ -28,19 +28,17 @@ def _run_context():
     run = context["dag_run"]
     conf = run.conf or {}
     try:
-        day = observation_date(run.run_type, run.data_interval_end, conf.get("observation_date"))
+        day = observation_date(conf.get("observation_date"))
     except ValueError as error:
         raise AirflowFailException(str(error)) from None
     ti = context["ti"]
-    # Airflow retains try numbers when a native backfill reprocesses a run.
+    # Airflow retains try numbers when a task is cleared and rerun.
     previous_tries = ti.max_tries - (ti.task.retries or 0)
     return day, run.run_id, ti.try_number - previous_tries, conf
 
 
 @task(retries=EXTRACT_RETRIES, retry_delay=timedelta(seconds=RETRY_DELAY_SECONDS))
 def extract_and_validate(metric: str) -> dict:
-    import requests
-
     from renewflow.transform import normalize_series
 
     day, run_id, attempt, conf = _run_context()
@@ -50,20 +48,15 @@ def extract_and_validate(metric: str) -> dict:
             day=day, attempt=attempt,
         ) as counts:
             manifest = conf.get("replay_manifest")
-            if manifest is not None and (not isinstance(manifest, str) or not manifest):
+            if not isinstance(manifest, str) or not manifest:
                 raise ValueError("replay_manifest must be a relative manifest filename")
-            fault = replay_fault(conf.get("fail_first"), replay=manifest is not None)
+            fault = replay_fault(conf.get("fail_first"), replay=True)
             fail_on_first_attempt(fault, day, metric, attempt)
-            if manifest is not None:
-                path = replay_path(Path("/opt/airflow/replay"), manifest)
-                snapshots = read_manifest(path)
-                if day not in snapshots:
-                    raise ValueError(f"replay manifest has no snapshot for {day}")
-                rows = read_series(snapshots[day], day, metric)
-            else:
-                api_key = os.environ.get("EIA_API_KEY", "").strip()
-                with requests.Session() as session:
-                    rows = fetch_series(session, metric, day, api_key=api_key).rows
+            path = replay_path(Path("/opt/airflow/replay"), manifest)
+            snapshots = read_manifest(path)
+            if day not in snapshots:
+                raise ValueError(f"replay manifest has no snapshot for {day}")
+            rows = read_series(snapshots[day], day, metric)
             counts["rows_received"] = len(rows)
             result = normalize_series(metric, day, rows)
             counts["rows_validated"] = len(result.observations)
@@ -74,9 +67,9 @@ def extract_and_validate(metric: str) -> dict:
                 "hours": [hour.isoformat() for hour in result.observations["hour_start_utc"]],
                 "values_mwh": [str(value) for value in result.observations["value_mwh"]],
             }
-    except RetryableEIAError:
+    except InjectedExtractFailure:
         raise
-    except (EIAError, OSError, ValueError) as error:
+    except (OSError, ValueError) as error:
         raise AirflowFailException(str(error)) from None
 
 
@@ -85,7 +78,7 @@ def publish_day(solar: dict, wind: dict, demand: dict) -> None:
     import pandas as pd
     import psycopg
 
-    from renewflow.db import connect_observations, load_day
+    from renewflow.db import connect_observations, load_day, publish_day as publish_application_day
 
     day, run_id, attempt, conf = _run_context()
     try:
@@ -107,7 +100,12 @@ def publish_day(solar: dict, wind: dict, demand: dict) -> None:
             if schema is not None and (not isinstance(schema, str) or not conf.get("replay_manifest")):
                 raise ValueError("benchmark_schema requires a replay manifest and a schema name")
             with connect_observations(benchmark_schema=schema) as connection:
-                counts["rows_changed"] = load_day(connection, batch)
+                if schema is None:
+                    status, changed = publish_application_day(connection, batch)
+                    counts["days_skipped"] = int(status == "skipped")
+                    counts["rows_changed"] = changed
+                else:
+                    counts["rows_changed"] = load_day(connection, batch)
     except psycopg.Error as error:
         code = f" (SQLSTATE {error.sqlstate})" if error.sqlstate else ""
         raise AirflowFailException(f"PostgreSQL load failed for {day} UTC{code}") from None
@@ -117,7 +115,7 @@ def publish_day(solar: dict, wind: dict, demand: dict) -> None:
 
 @dag(
     dag_id="renewflow_daily",
-    schedule=CronDataIntervalTimetable("0 19 * * *", timezone="UTC"),
+    schedule=None,
     start_date=datetime(2019, 1, 1, 19, tzinfo=UTC),
     catchup=False,
     max_active_runs=1,
